@@ -38,13 +38,8 @@ app.use(helmet());
 app.use(compression());
 app.use(cors({
   origin: (reqOrigin, callback) => {
-    const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim().toLowerCase().replace(/\/$/, ''));
-    if (!reqOrigin || allowed.includes(reqOrigin.toLowerCase().replace(/\/$/, '')) || allowed.includes('*')) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked for origin: ${reqOrigin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
+    // Reflect the origin if it exists, otherwise allow (for non-browser requests)
+    callback(null, true);
   },
   credentials: true,
 }));
