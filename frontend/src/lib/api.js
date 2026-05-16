@@ -3,16 +3,19 @@
  * src/lib/api.js
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+const BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 
 // ── Core fetch wrapper ────────────────────────────────────────────
 async function request(method, path, body = null, token = null) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
+  // Ensure path starts with /
+  const fullPath = path.startsWith('/') ? path : `/${path}`;
+
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
+    res = await fetch(`${BASE_URL}${fullPath}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,

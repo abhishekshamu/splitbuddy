@@ -34,7 +34,7 @@ const app = express();
 app.use(helmet());
 app.use(compression());
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'],
+  origin: (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(o => o) || ['http://localhost:3000'],
   credentials: true,
 }));
 app.use(morgan('combined'));
