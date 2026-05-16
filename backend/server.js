@@ -61,6 +61,10 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
 });
 
+app.get('/', (req, res) => {
+  res.send('🚀 SplitBuddy API is live! Please use the frontend to interact with the service.');
+});
+
 // ── Public Routes ─────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 
