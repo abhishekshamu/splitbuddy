@@ -30,6 +30,9 @@ connectDB();
 
 const app = express();
 
+// Trust Render's proxy for accurate rate limiting and IP detection
+app.set('trust proxy', 1);
+
 // ── Security & Middleware ─────────────────────────────────────────
 app.use(helmet());
 app.use(compression());
@@ -53,8 +56,8 @@ const authLimiter = rateLimit({
   message: { error: 'Too many auth attempts.' },
 });
 
-app.use('/api/', limiter);
-app.use('/api/auth/', authLimiter);
+app.use('/api', limiter);
+app.use('/api/auth', authLimiter);
 
 // ── Health Check ──────────────────────────────────────────────────
 app.get('/health', (req, res) => {
