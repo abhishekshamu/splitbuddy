@@ -55,16 +55,28 @@ const GroupSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  budget_updated_at: {
+    type: Date
+  },
+  budget_updated_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   budget_history: [{
     month: String,
     year: Number,
     budget: Number,
     spent: Number
   }],
-  invite_code: {
+  visibility: {
     type: String,
-    unique: true,
-    default: () => Math.random().toString(36).substring(2, 10)
+    enum: ['public', 'private'],
+    default: 'private'
+  },
+  avatar_url: String,
+  color: {
+    type: String,
+    default: '#9b6dff'
   },
   currency: {
     type: String,

@@ -69,34 +69,7 @@ const calculateSplits = (amount, split_type, members, custom_splits = []) => {
   }
 };
 
-const minimizeTransactions = (balances) => {
-  const creditors = balances.filter(b => b.net_balance > 0.01).map(b => ({ ...b }));
-  const debtors   = balances.filter(b => b.net_balance < -0.01).map(b => ({ ...b }));
-  const txns = [];
 
-  let ci = 0, di = 0;
-  while (ci < creditors.length && di < debtors.length) {
-    const credit = creditors[ci];
-    const debt   = debtors[di];
-    const amount = Math.min(credit.net_balance, Math.abs(debt.net_balance));
-
-    if (amount > 0.01) {
-      txns.push({
-        from:   debt.user_id,
-        to:     credit.user_id,
-        amount: parseFloat(amount.toFixed(2)),
-      });
-    }
-
-    credit.net_balance -= amount;
-    debt.net_balance   += amount;
-
-    if (credit.net_balance < 0.01) ci++;
-    if (Math.abs(debt.net_balance) < 0.01) di++;
-  }
-
-  return txns;
-};
 
 // ── Get all user expenses (across all groups) ─────────────────────
 router.get('/', asyncHandler(async (req, res) => {
@@ -187,57 +160,7 @@ router.get('/group/:group_id', asyncHandler(async (req, res) => {
   });
 }));
 
-// ── Get smart settlement plan for group ───────────────────────────
-router.get('/group/:group_id/settle-plan', asyncHandler(async (req, res) => {
-  const gId = new mongoose.Types.ObjectId(req.params.group_id);
-  const group = await Group.findById(gId).populate('members.user', 'full_name avatar_url upi_id');
-  if (!group) throw new AppError('Group not found', 404);
 
-  // Replicate vw_balances logic
-  const paidResult = await Expense.aggregate([
-    { $match: { group: gId, is_deleted: false } },
-    { $group: { _id: '$paid_by', total: { $sum: '$amount' } } }
-  ]);
-
-  const owedResult = await Expense.aggregate([
-    { $match: { group: gId, is_deleted: false } },
-    { $unwind: '$splits' },
-    { $group: { _id: '$splits.user', total: { $sum: '$splits.owed_amount' } } }
-  ]);
-
-  const paidMap = Object.fromEntries(paidResult.map(r => [r?._id?.toString?.() || 'unknown', r.total]));
-  const owedMap = Object.fromEntries(owedResult.map(r => [r?._id?.toString?.() || 'unknown', r.total]));
-
-  const balances = (group?.members || []).filter(m => m?.is_active).map(m => {
-    const uId = m?.user?._id?.toString?.() || m?.user?.toString?.() || m?._id?.toString?.();
-    if (!uId) return null;
-    const paid = paidMap[uId] || 0;
-    const owed = owedMap[uId] || 0;
-    return {
-      user_id: uId,
-      full_name: m?.user?.full_name || m?.full_name || 'Member',
-      avatar_url: m?.user?.avatar_url || '',
-      upi_id: m?.user?.upi_id || '',
-      total_paid: paid,
-      total_owed: owed,
-      net_balance: parseFloat((paid - owed).toFixed(2))
-    };
-  }).filter(Boolean);
-
-  const txns = minimizeTransactions(balances);
-
-  const userMap = Object.fromEntries(balances.map(b => [b.user_id, b]));
-  const enriched = txns.map(t => ({
-    ...t,
-    from_name:      userMap[t.from]?.full_name,
-    from_avatar:    userMap[t.from]?.avatar_url,
-    to_name:        userMap[t.to]?.full_name,
-    to_avatar:      userMap[t.to]?.avatar_url,
-    to_upi:         userMap[t.to]?.upi_id,
-  }));
-
-  res.json({ transactions: enriched, balances });
-}));
 
 // ── Add expense ───────────────────────────────────────────────────
 router.post('/', asyncHandler(async (req, res) => {
@@ -350,7 +273,14 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 
   const expense = await Expense.findById(req.params.id);
   if (!expense || expense.is_deleted) throw new AppError('Expense not found', 404);
-  if (expense?.created_by?.toString?.() !== req?.user?.id?.toString?.()) throw new AppError('Not authorized', 403);
+  
+  // Authorization check (allow creator or group admin - for simplicity here creator)
+  if (expense.created_by?.toString() !== req.user.id.toString()) {
+    throw new AppError('Not authorized to edit this expense', 403);
+  }
+
+  const group = await Group.findById(expense.group);
+  if (!group) throw new AppError('Group not found', 404);
 
   const update = {};
   if (title !== undefined) update.title = title;
@@ -358,16 +288,45 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   if (amount !== undefined) update.amount = amount;
   if (category !== undefined) update.category = category;
   if (split_type !== undefined) update.split_type = split_type;
-  if (paid_by !== undefined) update.paid_by = paid_by;
   if (receipt_url !== undefined) update.receipt_url = receipt_url;
   if (expense_date !== undefined) update.expense_date = expense_date;
 
+  // Handle Payer Update
+  if (paid_by !== undefined) {
+    const payer = group.members.find(m => 
+      (m?.user && m?.user?.toString() === paid_by?.toString()) || 
+      (m?._id?.toString() === paid_by?.toString()) ||
+      (m?.full_name === paid_by)
+    );
+    
+    update.paid_by = payer?.user || payer?._id || (mongoose.Types.ObjectId.isValid(paid_by) ? paid_by : null);
+    update.paid_by_name = payer?.full_name || 'Member';
+  }
+
   // Re-calculate splits if amount, split_type, or members changed
-  if (amount !== undefined || split_type !== undefined || member_ids !== undefined) {
+  if (amount !== undefined || split_type !== undefined || member_ids !== undefined || custom_splits !== undefined) {
     const finalAmount = amount !== undefined ? amount : expense.amount;
     const finalType = split_type !== undefined ? split_type : expense.split_type;
-    const finalMembers = member_ids !== undefined ? member_ids : (expense?.splits || []).map(s => s?.user?.toString?.() || "");
     const finalCustom = custom_splits !== undefined ? custom_splits : expense.splits;
+    
+    // Ensure we pass proper member objects (with user and full_name) to calculateSplits
+    let finalMembers = [];
+    if (member_ids !== undefined) {
+      finalMembers = member_ids.map(mId => {
+        const m = group.members.find(gm => 
+          (gm.user?.toString() === mId?.toString()) || 
+          (gm._id?.toString() === mId?.toString()) ||
+          (gm.full_name === mId)
+        );
+        return { 
+          user: m?.user || (mongoose.Types.ObjectId.isValid(mId) ? mId : null), 
+          full_name: m?.full_name || 'Member' 
+        };
+      });
+    } else {
+      finalMembers = expense.splits.map(s => ({ user: s.user, full_name: s.full_name }));
+    }
+
     update.splits = calculateSplits(finalAmount, finalType, finalMembers, finalCustom);
   }
 
@@ -375,9 +334,10 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     req.params.id,
     { $set: update },
     { new: true }
-  ).populate('paid_by', 'full_name').populate('splits.user', 'full_name');
+  ).populate('paid_by', 'full_name avatar_url').populate('splits.user', 'full_name avatar_url');
 
   await logActivity(updated.group, req.user.id, 'expense', 'updated', updated.title);
+  
   res.json({ expense: updated });
 }));
 

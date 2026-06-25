@@ -85,12 +85,35 @@ export const useGroupStore = create((set, get) => ({
     const token = useAuthStore.getState().token;
     try {
       const data = await api.groups.update(id, upd, token);
-      set(s => ({ 
-        groups: s.groups.map(g => g._id === id ? data.group : g), 
-        activeGroup: s.activeGroup?._id === id ? data.group : s.activeGroup 
-      }));
+      set(s => {
+        const strId = id.toString();
+        return { 
+          groups: s.groups.map(g => g._id.toString() === strId ? data.group : g), 
+          activeGroup: s.activeGroup?._id?.toString() === strId ? data.group : s.activeGroup 
+        };
+      });
+      return data.group;
     } catch (err) {
       set({ error: err.message });
+      throw err;
+    }
+  },
+
+  updateBudget: async (id, budgetAmount) => {
+    const token = useAuthStore.getState().token;
+    try {
+      const data = await api.groups.updateBudget(id, budgetAmount, token);
+      set(s => {
+        const strId = id.toString();
+        return { 
+          groups: s.groups.map(g => g._id.toString() === strId ? data.group : g), 
+          activeGroup: s.activeGroup?._id?.toString() === strId ? data.group : s.activeGroup 
+        };
+      });
+      return data.group;
+    } catch (err) {
+      console.error('[Store] updateBudget error:', err);
+      throw err;
     }
   },
 
@@ -101,6 +124,36 @@ export const useGroupStore = create((set, get) => ({
       set(s => ({ groups: s.groups.filter(g => g._id !== id) }));
     } catch (err) {
       set({ error: err.message });
+    }
+  },
+
+  addMemberToGroup: async (groupId, memberData) => {
+    const token = useAuthStore.getState().token;
+    try {
+      const data = await api.groups.addMember(groupId, memberData, token);
+      set(s => ({
+        groups: s.groups.map(g => g._id === groupId ? data.group : g),
+        activeGroup: s.activeGroup?._id === groupId ? data.group : s.activeGroup
+      }));
+      return data.group;
+    } catch (err) {
+      toast.error(err.message);
+      throw err;
+    }
+  },
+
+  removeMemberFromGroup: async (groupId, memberId) => {
+    const token = useAuthStore.getState().token;
+    try {
+      const data = await api.groups.removeMember(groupId, memberId, token);
+      set(s => ({
+        groups: s.groups.map(g => g._id === groupId ? data.group : g),
+        activeGroup: s.activeGroup?._id === groupId ? data.group : s.activeGroup
+      }));
+      return data.group;
+    } catch (err) {
+      toast.error(err.message);
+      throw err;
     }
   },
 
@@ -116,7 +169,11 @@ export const useExpenseStore = create((set, get) => ({
   loading:      false,
   settlePlan:   [],
   balances:     [],
+  userNetPosition: { totalReceivable: 0, totalPayable: 0, netBalance: 0 },
+  settlePlans:  {},
+  userNetPositions: {},
   settleHistory: [],
+  debugData:    null,
   groceries:    [],
   chores:       [],
   reminders:    [],
@@ -219,11 +276,25 @@ export const useExpenseStore = create((set, get) => ({
   fetchSettlePlan: async (groupId) => {
     const token = useAuthStore.getState().token;
     if (!groupId) return;
+    set({ loading: true, error: null });
     try {
-      const data = await api.settle.plan(groupId, token);
-      set({ settlePlan: data.transactions, balances: data.balances });
+      const data = await api.settle.plan(groupId, 'transparent', token);
+      if (data.debug && data.debug.error) {
+        set({ error: data.debug.error, debugData: data.debug });
+      } else {
+        set({ debugData: data.debug });
+      }
+      set((state) => ({ 
+        settlePlan: data.transactions || [], 
+        balances: data.balances || [],
+        userNetPosition: data.userNetPosition || { totalReceivable: 0, totalPayable: 0, netBalance: 0 },
+        settlePlans: { ...state.settlePlans, [groupId]: data.transactions || [] },
+        userNetPositions: { ...state.userNetPositions, [groupId]: data.userNetPosition || { totalReceivable: 0, totalPayable: 0, netBalance: 0 } }
+      }));
     } catch (err) {
-      set({ error: err.message });
+      set({ error: err.message, debugData: null });
+    } finally {
+      set({ loading: false });
     }
   },
 

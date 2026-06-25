@@ -42,7 +42,10 @@ const requireGroupAdmin = async (req, res, next) => {
       const uId = m.user?._id || m.user;
       return uId && uId.toString() === req.user.id.toString() && m.is_active;
     });
-    if (!member || member.role !== 'admin') {
+    
+    // Allow access if user is the group creator OR has admin role
+    const isCreator = group.created_by && group.created_by.toString() === req.user.id.toString();
+    if (!isCreator && (!member || member.role !== 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
     

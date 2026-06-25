@@ -19,6 +19,7 @@ const Expense      = require('../models/Expense');
 const { asyncHandler, AppError } = require('../middleware/errorHandler');
 const { requireGroupAdmin, requireGroupMember } = require('../middleware/auth');
 const mongoose = require('mongoose');
+const logActivity  = require('../config/activityLogger');
 
 // Helper to calculate balances for a group
 const calculateBalances = async (groupId) => {
@@ -81,38 +82,134 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // ── Create group ──────────────────────────────────────────────────
 router.post('/', asyncHandler(async (req, res) => {
-  const { name, description, emoji = '🏠', type = 'flatmates', color = '#9b6dff', members: memberNames = [] } = req.body;
-  if (!name) throw new AppError('Group name is required', 400);
+  const { 
+    name, 
+    description, 
+    emoji = '🏠', 
+    type = 'flatmates', 
+    color = '#9b6dff', 
+    visibility = 'private', 
+    avatar_url = '', 
+    members: memberNames = [] 
+  } = req.body;
 
+  // 1. Group Name Validation
+  const nameTrimmed = name?.trim();
+  if (!nameTrimmed) {
+    throw new AppError('Group name is required', 400);
+  }
+  if (nameTrimmed.length < 3 || nameTrimmed.length > 50) {
+    throw new AppError('Group name must be between 3 and 50 characters', 400);
+  }
+
+  // 2. Prevent duplicate group names for this user
+  const duplicateNameRegex = new RegExp(`^${nameTrimmed.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i');
+  const duplicateGroup = await Group.findOne({
+    name: { $regex: duplicateNameRegex },
+    'members.user': req.user._id,
+    'members.is_active': true,
+    is_archived: false
+  });
+  if (duplicateGroup) {
+    throw new AppError('You already have an active group with this name', 400);
+  }
+
+  // 3. Emoji Validation
+  const emojiTrimmed = emoji?.trim() || '🏠';
+
+  // 4. Type Validation
+  const validTypes = ['flatmates', 'trip', 'hostel', 'office', 'friends', 'family', 'custom'];
+  const typeLower = type?.toLowerCase()?.trim() || 'flatmates';
+  if (!validTypes.includes(typeLower)) {
+    throw new AppError(`Invalid group type. Must be one of: ${validTypes.join(', ')}`, 400);
+  }
+
+  // 5. Color Validation (Hex format)
+  const colorTrimmed = color?.trim() || '#9b6dff';
+  if (!/^#[0-9A-F]{6}$/i.test(colorTrimmed)) {
+    throw new AppError('Invalid color format. Must be a valid hex color code.', 400);
+  }
+
+  // 6. Visibility Validation
+  const visibilityLower = visibility?.toLowerCase()?.trim() || 'private';
+  if (!['public', 'private'].includes(visibilityLower)) {
+    throw new AppError('Visibility must be either public or private', 400);
+  }
+
+  // 7. Member Management & Duplicate Checks
+  const uniqueMemberIdentifiers = new Set();
   const members = [{
     user: req.user._id,
     full_name: req.user.full_name,
-    role: 'admin'
+    role: 'admin',
+    is_active: true
   }];
+  uniqueMemberIdentifiers.add(req.user._id.toString());
+  uniqueMemberIdentifiers.add(req.user.full_name.trim().toLowerCase());
 
   for (const m of memberNames) {
     if (typeof m === 'string') {
-      if (m === "You") continue;
-      members.push({ full_name: m, role: 'member' });
-    } else if (m && m.full_name) {
-      if (m.user && m.user.toString() === req.user._id.toString()) continue;
-      members.push({ 
-        user: m.user, 
-        full_name: m.full_name, 
-        role: 'member' 
-      });
+      const trimmedName = m.trim();
+      if (!trimmedName || trimmedName === "You" || trimmedName.toLowerCase() === req.user.full_name.toLowerCase()) {
+        continue;
+      }
+      
+      const lowerName = trimmedName.toLowerCase();
+      if (uniqueMemberIdentifiers.has(lowerName)) {
+        throw new AppError(`Duplicate member detected: ${trimmedName}`, 400);
+      }
+      uniqueMemberIdentifiers.add(lowerName);
+      members.push({ full_name: trimmedName, role: 'member', is_active: true });
+    } else if (m && typeof m === 'object') {
+      const uId = m.user?._id || m.user || m.id;
+      const fName = m.full_name?.trim();
+      
+      if (!fName) {
+        throw new AppError('Each member must have a full name', 400);
+      }
+      
+      if (uId) {
+        if (uId.toString() === req.user._id.toString()) continue;
+        if (uniqueMemberIdentifiers.has(uId.toString())) {
+          throw new AppError(`Duplicate member detected: ${fName}`, 400);
+        }
+        uniqueMemberIdentifiers.add(uId.toString());
+        members.push({ 
+          user: uId, 
+          full_name: fName, 
+          role: m.role || 'member', 
+          is_active: true 
+        });
+      } else {
+        const lowerName = fName.toLowerCase();
+        if (uniqueMemberIdentifiers.has(lowerName)) {
+          throw new AppError(`Duplicate member detected: ${fName}`, 400);
+        }
+        uniqueMemberIdentifiers.add(lowerName);
+        members.push({ 
+          full_name: fName, 
+          role: m.role || 'member', 
+          is_active: true 
+        });
+      }
     }
   }
 
+  // 8. Create the Group
   const group = await Group.create({
-    name,
-    description,
-    emoji,
-    type,
-    color,
+    name: nameTrimmed,
+    description: description?.trim(),
+    emoji: emojiTrimmed,
+    type: typeLower,
+    color: colorTrimmed,
+    visibility: visibilityLower,
+    avatar_url: avatar_url?.trim(),
     created_by: req.user._id,
     members
   });
+
+  // 9. Log activity
+  await logActivity(group._id, req.user.id, 'group', 'created', group.name);
 
   res.status(201).json({ group });
 }));
@@ -151,6 +248,33 @@ router.get('/:group_id', requireGroupMember, asyncHandler(async (req, res) => {
   });
 }));
 
+// ── Update budget ──────────────────────────────────────────────────
+router.put('/:group_id/budget', requireGroupAdmin, asyncHandler(async (req, res) => {
+  const { monthly_budget } = req.body;
+  
+  if (monthly_budget === undefined) {
+    return res.status(400).json({ error: "monthly_budget is required" });
+  }
+
+  const group = await Group.findByIdAndUpdate(
+    req.params.group_id,
+    { 
+      $set: { 
+        monthly_budget: Number(monthly_budget),
+        budget_updated_at: new Date(),
+        budget_updated_by: req.user._id
+      } 
+    },
+    { new: true }
+  ).populate('members.user', 'full_name avatar_url');
+  
+  if (!group) {
+    return res.status(404).json({ error: "Group not found" });
+  }
+
+  res.json({ group });
+}));
+
 // ── Update group ──────────────────────────────────────────────────
 router.patch('/:group_id', requireGroupAdmin, asyncHandler(async (req, res) => {
   const { name, description, emoji, type, color, monthly_budget, is_archived, members: new_members } = req.body;
@@ -161,10 +285,17 @@ router.patch('/:group_id', requireGroupAdmin, asyncHandler(async (req, res) => {
   if (emoji !== undefined) update.emoji = emoji;
   if (type !== undefined) update.type = type;
   if (color !== undefined) update.color = color;
-  if (monthly_budget !== undefined) update.monthly_budget = monthly_budget;
+  if (monthly_budget !== undefined) {
+    update.monthly_budget = monthly_budget;
+    update.budget_updated_at = new Date();
+    update.budget_updated_by = req.user._id;
+  }
   if (is_archived !== undefined) update.is_archived = is_archived;
 
   // Handle members update if provided
+  console.log("Groups PATCH payload:", req.body);
+  console.log("Groups PATCH update object:", update);
+  
   if (new_members !== undefined) {
     update.members = new_members.map(m => {
       // If it's a string, it's a new member name
@@ -274,16 +405,45 @@ router.patch('/:group_id/members/:user_id', requireGroupAdmin, asyncHandler(asyn
   res.json({ message: 'Member role updated' });
 }));
 
-// ── Remove member (admin) ─────────────────────────────────────────
-router.delete('/:group_id/members/:user_id', requireGroupAdmin, asyncHandler(async (req, res) => {
-  const member = req.group.members.find(m => m?.user?.toString?.() === req?.params?.user_id?.toString?.() && m.is_active);
-  if (member) {
-    member.is_active = false;
-    await req.group.save();
+// ── Add member ──────────────────────────────────────────────────
+router.post('/:group_id/members', requireGroupMember, asyncHandler(async (req, res) => {
+  const { user_id, full_name, role = 'member' } = req.body;
+  const group = req.group;
+
+  // Check if already a member
+  const exists = group.members.find(m => 
+    (user_id && m.user?.toString() === user_id.toString()) || 
+    (!user_id && m.full_name === full_name && m.is_active)
+  );
+  
+  if (exists) {
+    if (exists.is_active) throw new AppError('Member already in group', 400);
+    exists.is_active = true; // Reactivate
+  } else {
+    group.members.push({ user: user_id, full_name, role });
   }
-  res.json({ message: 'Member removed' });
+
+  await group.save();
+  const populated = await Group.findById(group._id).populate('members.user', 'full_name avatar_url');
+  res.json({ group: populated });
 }));
 
-module.exports = router;
+// ── Remove member ───────────────────────────────────────────────
+router.delete('/:group_id/members/:m_id', requireGroupMember, asyncHandler(async (req, res) => {
+  const member = req.group.members.find(m => 
+    (m.user?.toString() === req.params.m_id) || 
+    (m._id.toString() === req.params.m_id)
+  );
+
+  if (!member) throw new AppError('Member not found', 404);
+  if (member.role === 'admin' && req.group.members.filter(m => m.role === 'admin' && m.is_active).length === 1) {
+    throw new AppError('Cannot remove the last admin', 400);
+  }
+
+  member.is_active = false;
+  await req.group.save();
+  
+  res.json({ message: 'Member removed', group: req.group });
+}));
 
 module.exports = router;
