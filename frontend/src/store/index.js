@@ -17,18 +17,33 @@ export const useAuthStore = create(
       isAuth:  false,
       loading: false,
       error:   null,
+      pinnedGroups: [],
 
-      setAuth: (user, token) => set({ user, token, isAuth: true }),
+      setAuth: (user, token) => set({
+        user, token, isAuth: true,
+        pinnedGroups: (user?.pinned_groups || []).map(id => id.toString())
+      }),
       updateUser: (updates)  => set(s => ({ user: { ...s.user, ...updates } })),
       updateProfile: async (data) => {
         set({ loading: true });
         try {
-          const response = await api.auth.updateProfile(data);
-          set({ user: response.data.user, loading: false });
-          return response.data.user;
+          const response = await api.auth.updateProfile(data, get().token);
+          set({ user: response.user, loading: false });
+          return response.user;
         } catch (err) {
           set({ error: err.response?.data?.message || err.message, loading: false });
           throw err;
+        }
+      },
+      togglePinGroup: async (groupId) => {
+        const token = get().token;
+        try {
+          const res = await api.auth.pinGroup(groupId, token);
+          const newPinned = (res.pinned_groups || []).map(id => id.toString());
+          set(s => ({ pinnedGroups: newPinned, user: { ...s.user, pinned_groups: res.pinned_groups } }));
+          return newPinned;
+        } catch (err) {
+          toast.error('Failed to update pin');
         }
       },
       searchUsers: async (q) => {
@@ -38,12 +53,12 @@ export const useAuthStore = create(
         } catch (err) { return []; }
       },
       logout: () => {
-        set({ user: null, token: null, isAuth: false });
+        set({ user: null, token: null, isAuth: false, pinnedGroups: [] });
         localStorage.removeItem('splitbuddy-auth');
       },
       getToken: () => get().token,
     }),
-    { name: 'splitbuddy-auth', partialize: s => ({ user: s.user, token: s.token, isAuth: s.isAuth }) }
+    { name: 'splitbuddy-auth', partialize: s => ({ user: s.user, token: s.token, isAuth: s.isAuth, pinnedGroups: s.pinnedGroups }) }
   )
 );
 
@@ -309,6 +324,26 @@ export const useExpenseStore = create((set, get) => ({
     } catch (err) {
       set({ error: err.message, loading: false });
       throw err;
+    }
+  },
+
+  undoSettlement: async (id, groupId) => {
+    const token = useAuthStore.getState().token;
+    if (!token) throw new Error("Unauthorized");
+    set({ settleLoading: true });
+    try {
+      const res = await api.settle.undo(id, token);
+      if (res.success) {
+        // Single Source of Truth: update immediately
+        const gid = groupId && groupId !== 'all' ? groupId : 'all';
+        await get().refreshGroupContext(gid);
+        if (gid !== 'all') {
+          await get().refreshGroupContext('all');
+        }
+      }
+      return res;
+    } finally {
+      set({ settleLoading: false });
     }
   },
 

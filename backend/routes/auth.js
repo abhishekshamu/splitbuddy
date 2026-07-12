@@ -101,6 +101,29 @@ router.patch('/me', authenticate, asyncHandler(async (req, res) => {
   res.json({ user });
 }));
 
+// ── Toggle pinned group ───────────────────────────────────────────
+router.post('/me/pin-group', authenticate, asyncHandler(async (req, res) => {
+  const { group_id } = req.body;
+  if (!group_id) throw new AppError('group_id is required', 400);
+
+  const user = await User.findById(req.user.id);
+  if (!user) throw new AppError('User not found', 404);
+
+  const pinnedIds = (user.pinned_groups || []).map(id => id.toString());
+  let update;
+
+  if (pinnedIds.includes(group_id.toString())) {
+    // Unpin
+    update = { $pull: { pinned_groups: group_id } };
+  } else {
+    // Pin
+    update = { $addToSet: { pinned_groups: group_id } };
+  }
+
+  const updated = await User.findByIdAndUpdate(req.user.id, update, { new: true });
+  res.json({ user: updated, pinned_groups: updated.pinned_groups });
+}));
+
 // ── User Search ───────────────────────────────────────────────────
 router.get('/search', authenticate, asyncHandler(async (req, res) => {
   const { q } = req.query;
@@ -115,6 +138,27 @@ router.get('/search', authenticate, asyncHandler(async (req, res) => {
   }, 'full_name email avatar_url').limit(8);
 
   res.json({ users });
+}));
+
+// ── Change Password ───────────────────────────────────────────────
+router.post('/change-password', authenticate, asyncHandler(async (req, res) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password || new_password.length < 6) {
+    throw new AppError('Invalid password data', 400);
+  }
+  const user = await User.findById(req.user.id).select('+password');
+  if (!await bcrypt.compare(current_password, user.password)) {
+    throw new AppError('Current password is incorrect', 401);
+  }
+  user.password = await bcrypt.hash(new_password, 10);
+  await user.save();
+  res.json({ success: true, message: 'Password changed successfully' });
+}));
+
+// ── Delete Account ──────────────────────────────────────────────────
+router.delete('/me', authenticate, asyncHandler(async (req, res) => {
+  await User.findByIdAndDelete(req.user.id);
+  res.json({ success: true, message: 'Account deleted' });
 }));
 
 module.exports = router;

@@ -1,0 +1,1 @@
+function Reports({ nav, openModal }

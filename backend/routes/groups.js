@@ -272,6 +272,8 @@ router.put('/:group_id/budget', requireGroupAdmin, asyncHandler(async (req, res)
     return res.status(404).json({ error: "Group not found" });
   }
 
+  await logActivity(req.params.group_id, req.user._id, 'budget', 'updated', `₹${monthly_budget}`);
+
   res.json({ group });
 }));
 

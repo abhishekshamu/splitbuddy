@@ -4,43 +4,121 @@ import { useAuthStore, useGroupStore, useExpenseStore, useUIStore } from "./stor
 import api from "./lib/api";
 import dynamic from 'next/dynamic';
 import AccountingDebugPanel from './components/AccountingDebugPanel';
-import { computeBalances, generateTransparentSettlements, generateOptimizedSettlements } from './utils/settlementEngine';
 
 import MyBalancesModal from './components/MyBalancesModal';
 
 const CreateGroupModal = dynamic(() => import('./components/CreateGroupModal'), { ssr: false });
+import {
+  Home, Zap, Wifi, ShoppingCart, Utensils, Flame, Sparkles, Droplets, Package,
+  Settings as SettingsIcon, ArrowRight, ArrowLeft, ArrowUpRight, ArrowDownRight, Bell, Calendar,
+  CheckCircle2, ChevronRight, ChevronLeft, Menu, Plus, RefreshCw, Search, Trash2, X, Wallet,
+  Users, BarChart3, PieChart, Activity, LogOut, Check, ChevronDown, List, Grid,
+  MoreVertical, Share, FileText, Link as LinkIcon, AlertTriangle
+} from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 
 export function useCentralBalance(groupId = 'all') {
-  const { settlePlans, userNetPositions } = useExpenseStore();
+  const { settlePlans, userNetPositions, groupBalances } = useExpenseStore();
   const { user } = useAuthStore();
   
-  const rawNetPos = userNetPositions[groupId] || { totalReceivable: 0, totalPayable: 0, netBalance: 0 };
-  const rawPlan = settlePlans[groupId] || [];
+  const rawNetPos = userNetPositions?.[groupId] || { totalReceivable: 0, totalPayable: 0, netBalance: 0 };
+  const rawPlan = settlePlans?.[groupId] || [];
+  const rawBalances = groupBalances?.[groupId] || [];
 
   return useMemo(() => {
+    // SINGLE SOURCE OF TRUTH: Rely entirely on backend computed balances.
+    const userName = user?.full_name?.toLowerCase()?.trim() || "";
+    
+    // The rawPlan from the backend is already filtered for the current user (either as payer or receiver).
+    const toReceiveList = rawPlan.filter(t => t.to_name?.toLowerCase().trim() === userName);
+    const toPayList = rawPlan.filter(t => t.from_name?.toLowerCase().trim() === userName);
+
     return {
-      netBalance: rawNetPos.netBalance,
-      toReceiveTotal: rawNetPos.totalReceivable,
-      toPayTotal: rawNetPos.totalPayable,
-      toReceiveList: rawPlan.filter(t => t.to_name?.toLowerCase() === user?.full_name?.toLowerCase()),
-      toPayList: rawPlan.filter(t => t.from_name?.toLowerCase() === user?.full_name?.toLowerCase()),
-      rawPlan
+      netBalance: rawNetPos.netBalance || 0,
+      toReceiveTotal: rawNetPos.totalReceivable || 0,
+      toPayTotal: rawNetPos.totalPayable || 0,
+      toReceiveList,
+      toPayList,
+      rawPlan,
+      rawBalances
     };
-  }, [rawNetPos, rawPlan, user]);
+  }, [rawPlan, rawBalances, rawNetPos, user]);
 }
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg: #0a0a0f; --bg-card: #12121a; --bg-glass: rgba(255,255,255,0.04); --bg-glass2: rgba(255,255,255,0.07);
-    --border: rgba(255,255,255,0.08); --border2: rgba(255,255,255,0.13);
-    --lime: #b5ff4d; --violet: #9b6dff; --cyan: #3de8d0; --pink: #ff5fcb; --amber: #ffb830;
-    --tx: #f0f0f8; --tx2: #8888a0; --tx3: #55556a;
-    --fd: 'Syne', sans-serif; --fb: 'DM Sans', sans-serif; --fn: 'Inter', sans-serif;
+    --bg-app: #101014;
+    --bg-card: #17171d;
+    --border-subtle: #232330;
+    --text-primary: #f2f2f5;
+    --text-secondary: #8b8b99;
+    --text-muted: #65656f;
+    --accent-green: #22d47a;
+    --accent-green-light: #4dffa0;
+    --accent-red: #ff5470;
+    --bg-glass: rgba(255,255,255,0.04);
+    --bg-glass2: rgba(255,255,255,0.07);
+    --border: var(--border-subtle);
+    --border2: rgba(255,255,255,0.13);
+    
+    /* Legacy fallbacks (to prevent breaking untouched components temporarily) */
+    --bg: var(--bg-app);
+    --lime: var(--accent-green-light);
+    --violet: #9b6dff;
+    --cyan: #3de8d0;
+    --pink: #ff5fcb;
+    --amber: #ffb830;
+    --tx: var(--text-primary);
+    --tx2: var(--text-secondary);
+    --tx3: var(--text-muted);
+    
+    /* Typography standardization */
+    --fd: 'Inter', sans-serif;
+    --fb: 'Inter', sans-serif;
+    --fn: 'Inter', sans-serif;
   }
-  html,body,#root { height:100%; background:var(--bg); color:var(--tx); font-family:var(--fb); overflow-x: hidden; }
+  html,body,#root { height:100%; background:var(--bg-app); color:var(--text-primary); font-family:'Inter', sans-serif; overflow-x: hidden; }
   ::-webkit-scrollbar { width:5px; } ::-webkit-scrollbar-thumb { background:var(--border2); border-radius:99px; }
+
+  
+  /* ACTION BUTTON SYSTEM */
+  .action-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 12px 20px; border-radius: 12px; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; border: none; font-family: var(--fb); min-height: 48px; }
+  .action-btn.primary { background: var(--lime); color: #000; }
+  .action-btn.primary:hover { background: #ccff77; box-shadow: 0 0 24px rgba(181,255,77,0.22); }
+  .action-btn.ghost { background: var(--bg-glass); color: var(--tx); border: 1px solid var(--border); }
+  .action-btn.ghost:hover { background: var(--bg-glass2); }
+  .action-btn.danger { background: rgba(255,80,80,0.1); color: #ff6060; border: 1px solid rgba(255,80,80,0.18); }
+  .action-btn.sm { padding: 8px 14px; min-height: 36px; font-size: 13px; border-radius: 10px; }
+  .action-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  @media(max-width: 768px) { .action-btn { width: 100%; } .action-row { flex-direction: column; } }
+
+  .status-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+  .status-badge.completed { background: rgba(181,255,77,0.12); color: var(--lime); }
+  .status-badge.reversed { background: rgba(255,255,255,0.08); color: var(--tx3); }
+  .strike { text-decoration: line-through; }
+
+  .hide-scroll::-webkit-scrollbar { display: none; }
+  .hide-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+
+  .filter-chip { padding: 10px 20px; border-radius: 24px; white-space: nowrap; font-size: 14px; font-weight: 600; border: none; transition: all 0.25s ease; cursor: pointer; flex-shrink: 0; }
+  .filter-chip.active { background: var(--tx); color: var(--bg); }
+  .filter-chip:not(.active) { background: var(--bg-card); color: var(--tx2); }
+
+  .settle-history-item { padding: 16px; border-radius: 16px; background: var(--bg-glass); border: 1px solid var(--border); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; transition: all 0.2s; }
+  .settle-history-item.reversed { opacity: 0.65; border-color: rgba(255,255,255,0.04); }
+  @media(max-width: 480px) { 
+    .settle-history-item { flex-direction: column; align-items: flex-start; } 
+    .settle-history-item > div:last-child { width: 100%; flex-wrap: wrap; gap: 8px; justify-content: flex-start !important; }
+  }
+
+  @media(max-width: 768px) {
+    .insights-export-row { flex-direction: column; }
+    .insights-export-row .action-btn { width: 100%; }
+  }
 
   /* --- LANDING V2 --- */
   .landing-v2 { display: flex; flex-direction: column; min-height: 100vh; background: var(--bg); overflow-y: auto; overflow-x: hidden; }
@@ -170,13 +248,16 @@ const CSS = `
   .group-total { font-family:var(--fn); font-size:26px; font-weight:800; font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; line-height: 1; }
   .member-avatars { display:flex; }
 
-  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.72); backdrop-filter:blur(8px); z-index:100; display:flex; align-items:center; justify-content:center; padding:20px; animation:fadeIn .2s ease; }
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.72); backdrop-filter:blur(8px); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px; animation:fadeIn .2s ease; }
   .modal { background:var(--bg-card); border:1px solid var(--border2); border-radius:26px; padding:28px; width:min(95vw, 500px); max-height:90vh; overflow-y:auto; animation:slideUp .22s cubic-bezier(.4,0,.2,1); box-shadow:0 40px 80px rgba(0,0,0,0.6); display: flex; flex-direction: column; box-sizing: border-box; }
   .modal-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; }
   .modal-title { font-family:var(--fd); font-size:clamp(18px, 4vw, 24px); font-weight:700; }
   .modal-close { width:30px; height:30px; border-radius:8px; background:var(--bg-glass); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:14px; color:var(--tx2); transition:all .15s; flex-shrink: 0; }
   .modal-close:hover { background:var(--bg-glass2); color:var(--tx); }
   @keyframes fadeIn{from{opacity:0}to{opacity:1}} @keyframes slideUp{from{transform:translateY(18px);opacity:0}to{transform:translateY(0);opacity:1}}
+  
+  .settle-modal-footer { display: flex; gap: 12px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--bg-card); z-index: 10; padding-bottom: max(0px, env(safe-area-inset-bottom)); }
+  @media(max-width: 768px) { .settle-modal-footer { flex-direction: column; } .settle-modal-footer .btn { width: 100%; height: 48px; } }
 
   .form-group { margin-bottom:16px; width: 100%; box-sizing: border-box; }
   .form-label { font-size:11px; font-weight:700; color:var(--tx2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; display:block; }
@@ -702,16 +783,100 @@ const CSS = `
     border-radius: 0 0 14px 14px; animation: undoCountdown 5s linear forwards;
   }
   @keyframes undoCountdown { from { width: 100%; } to { width: 0%; } }
+
+  /* ── GROUP PICKER ─────────────────────────────────────────────── */
+  .gp-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.72); backdrop-filter:blur(12px); z-index:1001; display:flex; align-items:center; justify-content:center; padding:20px; animation:fadeIn .2s ease; }
+  .gp-modal { background:var(--bg-card); border:1px solid var(--border2); border-radius:24px; width:min(95vw,480px); max-height:80vh; display:flex; flex-direction:column; animation:slideUp .25s cubic-bezier(.4,0,.2,1); box-shadow:0 40px 80px rgba(0,0,0,0.6); overflow:hidden; }
+  .gp-header { padding:24px 24px 0; }
+  .gp-header-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .gp-title { font-family:var(--fd); font-size:20px; font-weight:700; color:var(--tx); }
+  .gp-subtitle { font-size:13px; color:var(--tx3); margin-bottom:16px; font-weight:500; }
+  .gp-search { width:100%; padding:12px 16px; padding-left:40px; background:var(--bg-glass); border:1px solid var(--border); border-radius:12px; color:var(--tx); font-size:14px; outline:none; transition:border-color .15s, box-shadow .15s; box-sizing:border-box; font-family:var(--fb); }
+  .gp-search:focus { border-color:var(--lime); box-shadow:0 0 0 3px rgba(181,255,77,0.09); }
+  .gp-search-wrap { position:relative; margin-bottom:8px; }
+  .gp-search-icon { position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:16px; color:var(--tx3); pointer-events:none; }
+  .gp-list { padding:8px 16px 16px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; flex:1; }
+  .gp-card { display:flex; align-items:center; gap:14px; padding:14px 16px; background:var(--bg-glass); border:1.5px solid var(--border); border-radius:14px; cursor:pointer; transition:all .18s ease; position:relative; overflow:hidden; }
+  .gp-card::before { content:''; position:absolute; inset:0; background:linear-gradient(135deg,rgba(181,255,77,0.04),transparent); opacity:0; transition:opacity .18s; }
+  .gp-card:hover { border-color:rgba(181,255,77,0.3); transform:translateY(-1px); box-shadow:0 4px 20px rgba(0,0,0,0.2); }
+  .gp-card:hover::before { opacity:1; }
+  .gp-card:active { transform:scale(0.985); }
+  .gp-card-icon { width:44px; height:44px; border-radius:12px; background:rgba(181,255,77,0.08); display:flex; align-items:center; justify-content:center; font-size:22px; flex-shrink:0; border:1px solid rgba(181,255,77,0.1); }
+  .gp-card-info { flex:1; min-width:0; }
+  .gp-card-name { font-size:15px; font-weight:700; color:var(--tx); margin-bottom:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .gp-card-meta { font-size:12px; color:var(--tx3); display:flex; align-items:center; gap:8px; font-weight:500; }
+  .gp-card-meta .dot { width:3px; height:3px; border-radius:50%; background:var(--tx3); opacity:0.5; }
+  .gp-card-arrow { color:var(--tx3); font-size:18px; transition:transform .18s, color .18s; flex-shrink:0; }
+  .gp-card:hover .gp-card-arrow { color:var(--lime); transform:translateX(3px); }
+  .gp-empty { padding:40px 24px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:16px; }
+  .gp-empty-icon { font-size:48px; opacity:0.6; }
+  .gp-empty-title { font-size:16px; font-weight:700; color:var(--tx); }
+  .gp-empty-desc { font-size:13px; color:var(--tx3); line-height:1.5; }
+
+  /* Group Badge (read-only in edit/context mode) */
+  .gp-badge { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; background:rgba(181,255,77,0.06); border:1px solid rgba(181,255,77,0.15); border-radius:10px; font-size:14px; font-weight:600; color:var(--tx); }
+  .gp-badge-icon { font-size:18px; }
+  .gp-badge-lock { font-size:11px; color:var(--tx3); margin-left:4px; }
+
+  /* ── GROUP CHIP NAVIGATION & SEARCH MODAL ─────────────────────────────────── */
+  .chip-nav-container { display:flex; gap:10px; overflow-x:auto; padding-bottom:6px; margin-bottom:12px; scrollbar-width:none; -ms-overflow-style:none; }
+  .chip-nav-container::-webkit-scrollbar { display:none; }
+  
+  .g-chip { display:inline-flex; align-items:center; gap:8px; padding:0 20px; height:44px; border-radius:999px; background:var(--bg-card); border:1px solid rgba(255,255,255,0.05); color:var(--tx2); font-size:14px; font-weight:600; cursor:pointer; flex-shrink:0; transition:all 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275); user-select:none; }
+  .g-chip:hover { transform:translateY(-2px); border-color:rgba(181,255,77,0.3); color:var(--tx); box-shadow:0 6px 16px rgba(0,0,0,0.2), 0 0 12px rgba(181,255,77,0.05); }
+  .g-chip.g-active { background:#ffffff; color:#000000; border-color:#ffffff; box-shadow:0 4px 12px rgba(255,255,255,0.2); }
+  .g-chip.g-active .g-chip-badge { background:rgba(0,0,0,0.1); color:#000000; }
+  
+  .g-chip-icon { font-size:16px; }
+  .g-chip-badge { font-size:11px; padding:2px 6px; border-radius:10px; background:rgba(255,255,255,0.1); color:var(--tx3); font-weight:700; transition:all 0.15s ease; }
+  
+  .g-search-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); display:flex; align-items:center; justify-content:center; z-index:10000; animation:gsFadeIn 0.2s ease; padding:20px; }
+  .g-search-modal { width:100%; max-width:480px; background:var(--bg-panel); border:1px solid rgba(255,255,255,0.1); border-radius:24px; box-shadow:0 24px 64px rgba(0,0,0,0.4); overflow:hidden; display:flex; flex-direction:column; max-height:85vh; animation:gsPop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+  
+  .g-search-header { padding:24px; border-bottom:1px solid rgba(255,255,255,0.05); }
+  .g-search-title { font-size:20px; font-weight:800; color:var(--tx); margin-bottom:16px; font-family:var(--fd); display:flex; justify-content:space-between; align-items:center; }
+  .g-search-input-wrap { position:relative; }
+  .g-search-input-wrap span { position:absolute; left:16px; top:50%; transform:translateY(-50%); color:var(--tx3); font-size:16px; }
+  .g-search-input { width:100%; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); padding:14px 16px 14px 44px; border-radius:16px; color:var(--tx); font-size:15px; transition:all 0.2s ease; outline:none; box-sizing:border-box; }
+  .g-search-input:focus { border-color:var(--lime); background:rgba(181,255,77,0.02); box-shadow:0 0 0 4px rgba(181,255,77,0.1); }
+  
+  .g-search-list { overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:8px; flex:1; }
+  .g-search-card { display:flex; align-items:center; gap:16px; padding:16px; background:var(--bg-card); border:1px solid rgba(255,255,255,0.03); border-radius:16px; cursor:pointer; transition:all 0.2s ease; }
+  .g-search-card:hover { transform:translateY(-2px); border-color:rgba(181,255,77,0.2); background:rgba(181,255,77,0.02); }
+  .g-search-card.g-active { border-color:var(--lime); background:rgba(181,255,77,0.05); }
+  .g-search-card.g-active .g-search-card-name { color:var(--lime); }
+  
+  .g-search-card-icon { width:44px; height:44px; border-radius:12px; background:rgba(255,255,255,0.05); display:flex; align-items:center; justify-content:center; font-size:22px; flex-shrink:0; }
+  .g-search-card-info { flex:1; min-width:0; }
+  .g-search-card-name { font-size:16px; font-weight:700; color:var(--tx); margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; transition:color 0.2s ease; }
+  .g-search-card-meta { font-size:13px; color:var(--tx3); display:flex; align-items:center; gap:8px; font-weight:500; }
+  
+  @keyframes gsFadeIn { from{opacity:0} to{opacity:1} }
+  @keyframes gsPop { from{opacity:0; transform:scale(0.96) translateY(10px)} to{opacity:1; transform:scale(1) translateY(0)} }
+
+  @media(max-width:768px) {
+    .gp-overlay { padding:0; align-items:flex-end; }
+    .gp-modal { width:100vw; max-height:85vh; border-radius:20px 20px 0 0; animation:gpSlideUp .3s cubic-bezier(.1,.9,.2,1); }
+    .gp-card { padding:16px; }
+    .gp-card-icon { width:48px; height:48px; font-size:24px; }
+    .gp-header { padding:20px 20px 0; }
+    .gp-list { padding:8px 20px 20px; }
+  }
+  @keyframes gpSlideUp { from{transform:translateY(100%);opacity:0} to{transform:translateY(0);opacity:1} }
 `;
 
 // ── DATA ─────────────────────────────────────────────────────────
 
 const CATS = [
-  { icon: "🏠", label: "Rent", color: "#9b6dff" }, { icon: "⚡", label: "Electricity", color: "#ffb830" },
-  { icon: "📶", label: "WiFi", color: "#3de8d0" }, { icon: "🛒", label: "Grocery", color: "#4dff88" },
-  { icon: "🍔", label: "Food", color: "#ff5fcb" }, { icon: "🔥", label: "Gas", color: "#ff8c42" },
-  { icon: "🧹", label: "Cleaning", color: "#b5ff4d" }, { icon: "💧", label: "Water", color: "#3de8d0" },
-  { icon: "🎮", label: "Other", color: "#9b6dff" },
+  { icon: <Home size={18} />, label: "Rent", color: "#9b6dff", stringIcon: "🏠" },
+  { icon: <Zap size={18} />, label: "Electricity", color: "#ffb830", stringIcon: "⚡" },
+  { icon: <Wifi size={18} />, label: "WiFi", color: "#3de8d0", stringIcon: "📶" },
+  { icon: <ShoppingCart size={18} />, label: "Grocery", color: "#4dff88", stringIcon: "🛒" },
+  { icon: <Utensils size={18} />, label: "Food", color: "#ff5fcb", stringIcon: "🍔" },
+  { icon: <Flame size={18} />, label: "Gas", color: "#ff8c42", stringIcon: "🔥" },
+  { icon: <Sparkles size={18} />, label: "Cleaning", color: "#b5ff4d", stringIcon: "🧹" },
+  { icon: <Droplets size={18} />, label: "Water", color: "#3de8d0", stringIcon: "💧" },
+  { icon: <Package size={18} />, label: "Other", color: "#9b6dff", stringIcon: "🎮" },
 ];
 
 
@@ -790,17 +955,204 @@ function TrendChart({ data }) {
   );
 }
 
+// ── GROUP SEARCH MODAL ──────────────────────────────────────────────
+function GroupSearchModal({ onSelect, onClose, nav, allowAll = false }) {
+  const { groups } = useGroupStore();
+  const { allExpenses } = useExpenseStore();
+  const [search, setSearch] = useState('');
+
+  const filtered = groups.filter(g => 
+    (g.name || '').toLowerCase().includes((search || '').toLowerCase())
+  );
+
+  const groupTotals = useMemo(() => {
+    const totals = {};
+    (allExpenses || []).forEach(e => {
+      const gid = e.group?._id || e.group;
+      if (gid) totals[gid] = (totals[gid] || 0) + (e.amount || 0);
+    });
+    return totals;
+  }, [allExpenses]);
+
+  return (
+    <div className="g-search-overlay" onClick={onClose}>
+      <div className="g-search-modal" onClick={e => e.stopPropagation()}>
+        <div className="g-search-header">
+          <div className="g-search-title">
+            <span>Select Group</span>
+            <div className="modal-close" onClick={onClose} style={{ cursor: 'pointer', opacity: 0.5 }}>✕</div>
+          </div>
+          <div className="g-search-input-wrap">
+            <span>🔍</span>
+            <input 
+              className="g-search-input" 
+              placeholder="Search groups..." 
+              value={search} 
+              onChange={e => setSearch(e.target.value)} 
+              autoFocus 
+            />
+          </div>
+        </div>
+        
+        <div className="g-search-list hide-scroll">
+          {allowAll && (!search || "all groups".includes((search || '').toLowerCase())) && (
+            <div className="g-search-card" onClick={() => onSelect({ _id: 'all', name: 'All Groups' })}>
+              <div className="g-search-card-icon"><Grid size={20} /></div>
+              <div className="g-search-card-info">
+                <div className="g-search-card-name">All Groups</div>
+                <div className="g-search-card-meta">Global View</div>
+              </div>
+            </div>
+          )}
+          {filtered.map(g => (
+            <div key={g._id} className="g-search-card" onClick={() => onSelect(g)}>
+              <div className="g-search-card-icon"><Users size={20} /></div>
+              <div className="g-search-card-info">
+                <div className="g-search-card-name">{g.name}</div>
+                <div className="g-search-card-meta">
+                  <span>{g.members?.length || 0} Member{(g.members?.length || 0) !== 1 ? 's' : ''}</span>
+                  {groupTotals[g._id] > 0 && <>
+                    <span className="dot" style={{width:4,height:4,borderRadius:'50%',background:'var(--tx3)'}} />
+                    <span>₹{groupTotals[g._id].toLocaleString()} Total</span>
+                  </>}
+                </div>
+              </div>
+            </div>
+          ))}
+          {filtered.length === 0 && search && !allowAll && (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--tx3)', fontSize: 14 }}>
+              No groups matching "{search}"
+            </div>
+          )}
+        </div>
+        
+        <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', gap: 12 }}>
+          <button className="btn btn-primary" style={{ flex: 1, fontSize: 14 }} onClick={() => { onClose(); nav && nav('groups'); }}>+ Create Group</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── GROUP CHIP NAVIGATION ───────────────────────────────────────────
+function GroupChipNav({ selectedGroupId, onSelect, allowAll = false, nav }) {
+  const { groups } = useGroupStore();
+  const { pinnedGroups, togglePinGroup } = useAuthStore();
+  const [showSearch, setShowSearch] = useState(false);
+  
+  // Sort: pinned groups first, then the rest
+  const sortedGroups = useMemo(() => {
+    const pinned = groups.filter(g => pinnedGroups.includes(g._id));
+    const rest   = groups.filter(g => !pinnedGroups.includes(g._id));
+    return [...pinned, ...rest];
+  }, [groups, pinnedGroups]);
+
+  // Show up to 5 groups in the chip nav
+  const maxChips = 5;
+  const visibleGroups = sortedGroups.slice(0, maxChips);
+  const hasMore = sortedGroups.length > maxChips;
+  
+  return (
+    <>
+      <div className="chip-nav-container">
+        {allowAll && (
+          <div 
+            className={`g-chip ${selectedGroupId === 'all' ? 'g-active' : ''}`} 
+            onClick={() => onSelect({ _id: 'all' })}
+          >
+            <span className="g-chip-icon"><Grid size={16} /></span>
+            <span>All Groups</span>
+          </div>
+        )}
+        
+        {visibleGroups.map(g => {
+          const isPinned = pinnedGroups.includes(g._id);
+          return (
+            <div 
+              key={g._id} 
+              className={`g-chip ${selectedGroupId === g._id ? 'g-active' : ''}`}
+              style={{ position: 'relative' }}
+            >
+              <span className="g-chip-icon" onClick={() => onSelect(g)}><Users size={16} /></span>
+              <span onClick={() => onSelect(g)}>{g.name}</span>
+              {(g.members?.length > 0) && (
+                <span className="g-chip-badge" onClick={() => onSelect(g)}>{g.members.length}</span>
+              )}
+              <span
+                title={isPinned ? 'Unpin group' : 'Pin group'}
+                onClick={(e) => { e.stopPropagation(); togglePinGroup(g._id); }}
+                style={{
+                  fontSize: 12, cursor: 'pointer', marginLeft: 2, opacity: isPinned ? 1 : 0.35,
+                  color: isPinned ? 'var(--lime)' : 'var(--tx3)', transition: 'opacity 0.2s'
+                }}
+              >📌</span>
+            </div>
+          );
+        })}
+        
+        {hasMore && (
+          <div className="g-chip" onClick={() => setShowSearch(true)}>
+            <span style={{ fontSize: 16 }}>+</span>
+            <span>More</span>
+          </div>
+        )}
+        
+        <div className="g-chip" style={{ borderStyle: 'dashed' }} onClick={() => nav && nav('groups')}>
+          <span style={{ fontSize: 16 }}>+</span>
+          <span>New</span>
+        </div>
+      </div>
+
+      {showSearch && (
+        <GroupSearchModal 
+          allowAll={allowAll}
+          onClose={() => setShowSearch(false)}
+          nav={nav}
+          onSelect={(g) => {
+            onSelect(g);
+            setShowSearch(false);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+// ── ADD EXPENSE FLOW (Wrapper) ──────────────────────────────────
+function AddExpenseFlow({ onClose, editExpense, forceGroup, nav }) {
+  const { groups } = useGroupStore();
+  const [selectedGroup, setSelectedGroup] = useState(() => {
+    // If editing, lock to the expense's group
+    if (editExpense) {
+      return groups.find(g => g._id === (editExpense.group?._id || editExpense.group)) || groups[0];
+    }
+    // If forced (from GroupDetail), use that group directly
+    if (forceGroup) return forceGroup;
+    // If only 1 group, skip the picker
+    if (groups.length === 1) return groups[0];
+    return null; // Show picker
+  });
+
+  // If no group selected yet, show the picker
+  if (!selectedGroup) {
+    return <GroupSearchModal onSelect={setSelectedGroup} onClose={onClose} nav={nav} />;
+  }
+
+  // Otherwise show the expense form with the selected group
+  return <AddExpenseModal onClose={onClose} editExpense={editExpense} group={selectedGroup} />;
+}
+
 // ── ADD EXPENSE MODAL ────────────────────────────────────────────
-function AddExpenseModal({ onClose, editExpense }) {
+function AddExpenseModal({ onClose, editExpense, group }) {
   const { addExpense, updateExpense } = useExpenseStore();
   const { groups, activeGroup } = useGroupStore();
 
   const isEdit = !!editExpense;
 
-  // Determine initial group
-  const initialGroup = editExpense
+  // Group is provided by AddExpenseFlow - single source of truth
+  const initialGroup = group || (editExpense
     ? (groups.find(g => g._id === (editExpense.group?._id || editExpense.group)) || activeGroup || groups[0])
-    : (activeGroup || groups[0]);
+    : (activeGroup || groups[0]));
 
   const [selectedGroup, setSelectedGroup] = useState(initialGroup);
   const [members, setMembers] = useState(selectedGroup?.members || []);
@@ -952,18 +1304,18 @@ function AddExpenseModal({ onClose, editExpense }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <div className="modal-title">{isEdit ? "Edit Expense ✏️" : "Add Expense ➕"}</div>
+          <div className="modal-title">
+            {isEdit ? "Edit Expense ✏️" : `Add Expense to ${selectedGroup?.name || ''}`}
+          </div>
           <div className="modal-close" onClick={onClose}>✕</div>
         </div>
-        {!isEdit && groups.length > 0 && (
-          <div className="form-group">
-            <label className="form-label">Select Group</label>
-            <select className="form-select" value={selectedGroup?._id} onChange={e => {
-              const g = groups.find(x => x._id === e.target.value);
-              setSelectedGroup(g);
-            }}>
-              {groups.map(g => <option key={g._id} value={g._id}>{g.emoji} {g.name}</option>)}
-            </select>
+        {isEdit && selectedGroup && (
+          <div className="form-group" style={{ marginBottom: 20 }}>
+            <div className="gp-badge">
+              <span className="gp-badge-icon">{selectedGroup.emoji}</span>
+              <span>{selectedGroup.name}</span>
+              <span className="gp-badge-lock">🔒</span>
+            </div>
           </div>
         )}
         <div className="form-group">
@@ -1549,34 +1901,31 @@ function Dashboard({ nav, openModal }) {
   console.log("Unique Members:", uniqueMembers);
   console.log("Count:", totalMembers);
 
-  // Statistics
-  const youOwe = 0;
-  const youGet = 0;
   const fairShare = totalMembers > 0 ? totalThisMonth / totalMembers : 0;
 
   return (
     <div className="dashboard-v3">
       <div className="stat-grid">
         <div className="stat-card lime">
-          <div className="stat-icon">📊</div>
+          <div className="stat-icon"><BarChart3 size={24} /></div>
           <div className="stat-label">Total Spending</div>
           <div className="stat-val lime">₹{totalThisMonth.toLocaleString()}</div>
           <div className="stat-meta">{allExpenses.length} expenses total</div>
         </div>
         <div className="stat-card violet">
-          <div className="stat-icon">👥</div>
+          <div className="stat-icon"><Users size={24} /></div>
           <div className="stat-label">Active Groups</div>
           <div className="stat-val violet">{groups.length}</div>
           <div className="stat-meta">Across all spaces</div>
         </div>
         <div className="stat-card cyan">
-          <div className="stat-icon">👤</div>
+          <div className="stat-icon"><Users size={24} /></div>
           <div className="stat-label">Total Members</div>
           <div className="stat-val cyan">{totalMembers}</div>
           <div className="stat-meta">Shared with {totalMembers} people</div>
         </div>
         <div className="stat-card pink">
-          <div className="stat-icon">⚖️</div>
+          <div className="stat-icon"><PieChart size={24} /></div>
           <div className="stat-label">Global Share</div>
           <div className="stat-val pink">₹{fairShare.toFixed(2)}</div>
           <div className="stat-meta">avg per person</div>
@@ -1585,19 +1934,19 @@ function Dashboard({ nav, openModal }) {
 
       <div className="card" style={{ marginTop: 20, background: "var(--bg-glass)", border: "1px solid var(--border)", borderRadius: 20 }}>
         <div className="section-header" style={{ marginBottom: 20 }}>
-          <div className="section-title" style={{ fontSize: 18, letterSpacing: 0.5 }}>💰 My Global Balance</div>
+          <div className="section-title" style={{ fontSize: 18, letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 8 }}><Wallet size={20} /> My Global Balance</div>
         </div>
 
         {toReceiveTotal === 0 && toPayTotal === 0 ? (
           <div style={{ textAlign: "center", padding: "40px 0" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12, color: 'var(--lime)' }}><CheckCircle2 size={40} /></div>
             <div style={{ fontSize: 18, fontWeight: 700, color: "var(--tx)", marginBottom: 8 }}>You're all settled up!</div>
             <div style={{ fontSize: 14, color: "var(--tx2)" }}>Nobody owes you. You don't owe anyone.</div>
           </div>
         ) : (
           <div className="dash-activity-grid" style={{ gap: 20 }}>
             <div style={{ background: "linear-gradient(to bottom right, rgba(181, 255, 77, 0.05), transparent)", borderRadius: 16, border: "1px solid rgba(181, 255, 77, 0.15)", padding: 20, display: "flex", flexDirection: "column" }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "var(--lime)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16 }}>💚 You Will Receive</div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "var(--lime)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}><ArrowDownRight size={16} /> You Will Receive</div>
               <div style={{ fontSize: 12, color: "var(--tx3)", marginBottom: 4, textTransform: "uppercase", fontWeight: 700 }}>Total</div>
               <div style={{ fontSize: 24, fontWeight: 800, color: "var(--lime)", fontFamily: "var(--fd)", marginBottom: 20 }}>₹{toReceiveTotal.toLocaleString()}</div>
 
@@ -1620,7 +1969,7 @@ function Dashboard({ nav, openModal }) {
             </div>
 
             <div style={{ background: "linear-gradient(to bottom right, rgba(255, 51, 102, 0.05), transparent)", borderRadius: 16, border: "1px solid rgba(255, 51, 102, 0.15)", padding: 20, display: "flex", flexDirection: "column" }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "var(--rose)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16 }}>❤️ You Need To Pay</div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "var(--rose)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}><ArrowUpRight size={16} /> You Need To Pay</div>
               <div style={{ fontSize: 12, color: "var(--tx3)", marginBottom: 4, textTransform: "uppercase", fontWeight: 700 }}>Total</div>
               <div style={{ fontSize: 24, fontWeight: 800, color: "var(--rose)", fontFamily: "var(--fd)", marginBottom: 20 }}>₹{toPayTotal.toLocaleString()}</div>
 
@@ -1720,7 +2069,7 @@ function Groups({ nav }) {
 
           return (
             <div className="group-card" key={g._id} onClick={() => nav("groupdetail", g)}>
-              <div className="group-card-head"><span className="group-emoji">{g.emoji}</span><span className={`tag tag-${colorTag[g.color] || "violet"}`}>{g.type}</span></div>
+              <div className="group-card-head"><span className="group-emoji"><Users size={24} /></span><span className={`tag tag-${colorTag[g.color] || "violet"}`}>{g.type}</span></div>
               <div className="group-name">{g.name}</div>
               <div className="group-members">{g.members?.length || 0} members</div>
               <div className="group-stat">
@@ -1756,7 +2105,7 @@ function GroupDetail({ group, nav }) {
   const [undoState, setUndoState] = useState(null);
   const undoTimerRef = useRef(null);
 
-  const { netBalance, toReceiveTotal, toPayTotal, toReceiveList, toPayList, rawPlan } = useCentralBalance(group?._id);
+  const { netBalance, toReceiveTotal, toPayTotal, toReceiveList, toPayList, rawPlan, rawBalances } = useCentralBalance(group?._id);
   const settlePlan = rawPlan;
 
   const groupBalances = useMemo(() => {
@@ -1769,7 +2118,7 @@ function GroupDetail({ group, nav }) {
     };
   }, [toReceiveTotal, toPayTotal, toReceiveList, toPayList, netBalance]);
 
-  const { fetchSettlePlan, settlePlans, userNetPositions } = useExpenseStore();
+  const { fetchSettlePlan, settlePlans, userNetPositions, settleLoading } = useExpenseStore();
 
   const currentGroup = group || { _id: 0, name: "Unknown", members: [], total_amount: 0, color: "#fff", emoji: "❓", type: "Unknown" };
 
@@ -1795,11 +2144,7 @@ function GroupDetail({ group, nav }) {
 
   const [confirmSettle, setConfirmSettle] = useState(null);
 
-  const memberBalances = useMemo(() => {
-    if (!currentGroup.members || currentGroup.members.length === 0) return [];
-    const { ledger } = computeBalances(groupExpenses, settleHistory || [], currentGroup.members);
-    return Array.from(ledger.values());
-  }, [currentGroup.members, groupExpenses, settleHistory]);
+  const memberBalances = rawBalances || [];
 
 
 
@@ -1884,7 +2229,7 @@ function GroupDetail({ group, nav }) {
         <div style={{ position: "relative", zIndex: 1, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
-              <div style={{ fontSize: 48, background: "rgba(0,0,0,0.2)", padding: "12px", borderRadius: 20 }}>{currentGroup.emoji}</div>
+              <div style={{ background: "rgba(0,0,0,0.2)", padding: "12px", borderRadius: 20, display: 'flex', color: 'var(--tx3)' }}><Users size={48} /></div>
               <div>
                 <div style={{ fontFamily: "var(--fd)", fontSize: 28, fontWeight: 800, color: "var(--tx)", lineHeight: 1.2 }}>{currentGroup.name}</div>
                 <div style={{ fontSize: 13, color: "var(--tx3)", marginTop: 4, fontWeight: 500 }}>{currentGroup.type || 'Group'}</div>
@@ -1919,7 +2264,7 @@ function GroupDetail({ group, nav }) {
             onClick={(e) => { e.stopPropagation(); setShowEdit(true); }}
             style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center" }}
           >
-            ✏️
+            <SettingsIcon size={16} />
           </button>
         </div>
       </div>
@@ -1931,7 +2276,7 @@ function GroupDetail({ group, nav }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {groupBalances.toReceiveTotal > 0 && (
               <div className="card" style={{ background: "linear-gradient(to right, rgba(181, 255, 77, 0.05), var(--bg-card))", border: "1px solid rgba(181, 255, 77, 0.15)" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--lime)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16 }}>💚 You Will Receive</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--lime)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}><ArrowDownRight size={16} /> You Will Receive</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {groupBalances.toReceiveGrouped.map((p, i) => (
                     <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1947,7 +2292,7 @@ function GroupDetail({ group, nav }) {
             )}
             {groupBalances.toPayTotal > 0 && (
               <div className="card" style={{ background: "linear-gradient(to right, rgba(255, 51, 102, 0.05), var(--bg-card))", border: "1px solid rgba(255, 51, 102, 0.15)" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--rose)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16 }}>❤️ You Need To Pay</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--rose)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}><ArrowUpRight size={16} /> You Need To Pay</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {groupBalances.toPayGrouped.map((p, i) => (
                     <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2016,9 +2361,9 @@ function GroupDetail({ group, nav }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {memberBalances.length === 0 && <div style={{ color: "var(--tx3)", fontSize: 15, padding: "30px 0", textAlign: "center" }}>No member data available.</div>}
           {memberBalances.map(b => {
-            const paid = b.total_paid || 0;
-            const owed = b.total_owed || 0;
-            const net = b.net_balance || 0;
+            const paid = b.totalPaid || 0;
+            const owed = b.totalOwed || 0;
+            const net = b.netBalance || 0;
 
             return (
               <div key={b.id || b.full_name} className="card" style={{ padding: 24, border: "1px solid var(--border)", background: "var(--bg-card)", borderRadius: 16 }}>
@@ -2041,11 +2386,11 @@ function GroupDetail({ group, nav }) {
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   <div style={{ fontSize: 13, color: "var(--tx3)", textTransform: "uppercase", fontWeight: 700, marginBottom: 12, letterSpacing: 0.5 }}>Net Balance</div>
                   {net > 0.01 ? (
-                    <div style={{ color: "var(--lime)", fontWeight: 800, fontSize: 20, display: "flex", alignItems: "center", gap: 8 }}>🟢 Gets Back ₹{net.toLocaleString()}</div>
+                    <div style={{ color: "var(--lime)", fontWeight: 800, fontSize: 20, display: "flex", alignItems: "center", gap: 8 }}><ArrowDownRight size={20} /> Gets Back ₹{net.toLocaleString()}</div>
                   ) : net < -0.01 ? (
-                    <div style={{ color: "var(--rose)", fontWeight: 800, fontSize: 20, display: "flex", alignItems: "center", gap: 8 }}>🔴 Owes ₹{Math.abs(net).toLocaleString()}</div>
+                    <div style={{ color: "var(--rose)", fontWeight: 800, fontSize: 20, display: "flex", alignItems: "center", gap: 8 }}><ArrowUpRight size={20} /> Owes ₹{Math.abs(net).toLocaleString()}</div>
                   ) : (
-                    <div style={{ color: "var(--tx2)", fontWeight: 800, fontSize: 20, display: "flex", alignItems: "center", gap: 8 }}>⚪ Settled Up</div>
+                    <div style={{ color: "var(--tx2)", fontWeight: 800, fontSize: 20, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={20} /> Settled Up</div>
                   )}
                 </div>
 
@@ -2070,7 +2415,7 @@ function GroupDetail({ group, nav }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {groupExpenses.length === 0 && <div style={{ color: "var(--tx3)", fontSize: 15, padding: "40px 0", textAlign: "center" }}>No expenses in this group yet. Add one using the button above!</div>}
           {groupExpenses.map(e => {
-            const catData = CATS.find(c => c.label.toLowerCase() === e.category) || { icon: '🎮', color: '#9b6dff' };
+            const catData = CATS.find(c => c.label.toLowerCase() === e.category) || { icon: <Package size={22} />, color: '#9b6dff' };
             const isMenuOpen = openMenuId === e._id;
 
             return (
@@ -2121,12 +2466,12 @@ function GroupDetail({ group, nav }) {
                     {isMenuOpen && (
                       <div className="ctx-menu">
                         <button className="ctx-item" onClick={(ev) => { ev.stopPropagation(); setOpenMenuId(null); setEditExp(e); }}>
-                          <span className="ctx-item-icon">✏️</span>
+                          <span className="ctx-item-icon"><FileText size={14} /></span>
                           Edit Expense
                         </button>
                         <div className="ctx-sep" />
                         <button className="ctx-item danger" onClick={(ev) => { ev.stopPropagation(); setOpenMenuId(null); setDeleteTarget(e); }}>
-                          <span className="ctx-item-icon">🗑</span>
+                          <span className="ctx-item-icon"><Trash2 size={14} /></span>
                           Delete Expense
                         </button>
                       </div>
@@ -2139,14 +2484,14 @@ function GroupDetail({ group, nav }) {
         </div>
       )}
 
-      {showEdit && <EditGroupModal group={g} onClose={() => setShowEdit(false)} onSave={(updated) => { updateGroup(updated._id, updated); nav("groups"); }} onDelete={(id) => { removeGroup(id); nav("groups"); }} />}
-      {editExp && <AddExpenseModal onClose={() => setEditExp(null)} editExpense={editExp} />}
+      {showEdit && <EditGroupModal group={currentGroup} onClose={() => setShowEdit(false)} onSave={(updated) => { updateGroup(updated._id, updated); nav("groups"); }} onDelete={(id) => { removeGroup(id); nav("groups"); }} />}
+      {editExp && <AddExpenseFlow onClose={() => setEditExp(null)} editExpense={editExp} />}
 
       {/* ── Delete Confirmation Modal ──────────────────── */}
       {deleteTarget && (
         <div className="confirm-overlay" onClick={(e) => { if (e.target === e.currentTarget) setDeleteTarget(null); }}>
           <div className="confirm-modal">
-            <span className="confirm-icon">⚠️</span>
+            <span className="confirm-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}><AlertTriangle size={32} /></span>
             <div className="confirm-title">Delete Expense?</div>
             <div className="confirm-desc">
               You are about to permanently delete <strong>"{deleteTarget.title}"</strong> for <strong>₹{deleteTarget.amount.toLocaleString()}</strong>.<br /><br />
@@ -2182,10 +2527,10 @@ function GroupDetail({ group, nav }) {
 
       {confirmSettle && (
         <div className="modal-overlay" onClick={() => setConfirmSettle(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ width: 'min(95vw, 450px)' }}>
             <div className="modal-header">
               <div className="modal-title">Confirm Settlement</div>
-              <div className="modal-close" onClick={() => setConfirmSettle(null)}>✕</div>
+              <div className="modal-close" onClick={() => setConfirmSettle(null)}><X size={20} /></div>
             </div>
             <div style={{ padding: "20px 0", textAlign: "center" }}>
               <div style={{ fontSize: 15, color: "var(--tx2)", marginBottom: 16, lineHeight: 1.6 }}>
@@ -2193,9 +2538,11 @@ function GroupDetail({ group, nav }) {
               </div>
               <div style={{ fontSize: 36, fontWeight: 800, color: "var(--lime)", fontFamily: "var(--fd)" }}>₹{confirmSettle.amount?.toLocaleString()}</div>
             </div>
-            <div className="add-footer">
-              <button className="btn btn-ghost" onClick={() => setConfirmSettle(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={() => handleFullSettle(confirmSettle)}>Confirm Settlement</button>
+            <div className="add-footer" style={{ display: 'flex', gap: 12, marginTop: 'auto', paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+              <button className="btn btn-ghost" onClick={() => setConfirmSettle(null)} style={{ flex: 1, width: '100%', padding: '14px', borderRadius: 14, fontWeight: 600 }}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => handleFullSettle(confirmSettle)} disabled={settleLoading} style={{ flex: 1.5, width: '100%', padding: '14px', borderRadius: 14, fontWeight: 700, fontSize: 16 }}>
+                {settleLoading ? 'Processing...' : 'Confirm Settlement'}
+              </button>
             </div>
           </div>
         </div>
@@ -2370,15 +2717,15 @@ function Expenses() {
   const dateGroups = groupByDate(filtered);
   const categoryChips = [
     { key: "all", label: "All", icon: "" },
-    { key: "rent", label: "Rent", icon: "🏠" },
-    { key: "electricity", label: "Electricity", icon: "⚡" },
-    { key: "wifi", label: "WiFi", icon: "📶" },
-    { key: "food", label: "Food", icon: "🍔" },
-    { key: "grocery", label: "Grocery", icon: "🛒" },
-    { key: "gas", label: "Gas", icon: "🔥" },
-    { key: "water", label: "Water", icon: "💧" },
-    { key: "cleaning", label: "Cleaning", icon: "🧹" },
-    { key: "other", label: "Other", icon: "🎮" },
+    { key: "rent", label: "Rent", icon: <Home size={14} /> },
+    { key: "electricity", label: "Electricity", icon: <Zap size={14} /> },
+    { key: "wifi", label: "WiFi", icon: <Wifi size={14} /> },
+    { key: "food", label: "Food", icon: <Utensils size={14} /> },
+    { key: "grocery", label: "Grocery", icon: <ShoppingCart size={14} /> },
+    { key: "gas", label: "Gas", icon: <Flame size={14} /> },
+    { key: "water", label: "Water", icon: <Droplets size={14} /> },
+    { key: "cleaning", label: "Cleaning", icon: <Sparkles size={14} /> },
+    { key: "other", label: "Other", icon: <Package size={14} /> },
   ];
 
   return (
@@ -2411,7 +2758,7 @@ function Expenses() {
       {/* ── Empty State ─────────────────────────────────── */}
       {filtered.length === 0 && (
         <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-          <div style={{ fontSize: 56, marginBottom: 16 }}>{search ? '🔍' : '📝'}</div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, color: 'var(--tx3)' }}>{search ? <Search size={56} /> : <FileText size={56} />}</div>
           <div style={{ fontFamily: 'var(--fd)', fontSize: 20, fontWeight: 700, marginBottom: 8, color: 'var(--tx)' }}>
             {search ? 'No results found' : 'No expenses yet'}
           </div>
@@ -2429,7 +2776,7 @@ function Expenses() {
           </div>
           <div style={{ display: 'grid', gap: 10 }}>
             {expenses.map(e => {
-              const catData = CATS.find(c => c.label.toLowerCase() === e.category) || { icon: '🎮', color: '#9b6dff' };
+              const catData = CATS.find(c => c.label.toLowerCase() === e.category) || { icon: <Package size={22} />, color: '#9b6dff' };
               return (
                 <div
                   className="expense-item"
@@ -2477,12 +2824,12 @@ function Expenses() {
                       {openMenuId === e._id && !isMobile && (
                         <div className="ctx-menu">
                           <button className="ctx-item" onClick={() => handleEdit(e)}>
-                            <span className="ctx-item-icon">✏️</span>
+                            <span className="ctx-item-icon"><FileText size={14} /></span>
                             Edit Expense
                           </button>
                           <div className="ctx-sep" />
                           <button className="ctx-item danger" onClick={() => handleDeleteClick(e)}>
-                            <span className="ctx-item-icon">🗑</span>
+                            <span className="ctx-item-icon"><Trash2 size={14} /></span>
                             Delete Expense
                           </button>
                         </div>
@@ -2506,11 +2853,11 @@ function Expenses() {
               {bottomSheetExp.title} · ₹{bottomSheetExp.amount.toLocaleString()}
             </div>
             <button className="bsheet-item" onClick={() => handleEdit(bottomSheetExp)}>
-              <span className="bsheet-item-icon">✏️</span>
+              <span className="bsheet-item-icon"><FileText size={16} /></span>
               Edit Expense
             </button>
             <button className="bsheet-item danger" onClick={() => handleDeleteClick(bottomSheetExp)}>
-              <span className="bsheet-item-icon">🗑</span>
+              <span className="bsheet-item-icon"><Trash2 size={16} /></span>
               Delete Expense
             </button>
             <button className="bsheet-cancel" onClick={() => setBottomSheetExp(null)}>
@@ -2524,7 +2871,7 @@ function Expenses() {
       {deleteTarget && (
         <div className="confirm-overlay" onClick={(e) => { if (e.target === e.currentTarget) setDeleteTarget(null); }}>
           <div className="confirm-modal">
-            <span className="confirm-icon">⚠️</span>
+            <span className="confirm-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}><AlertTriangle size={32} /></span>
             <div className="confirm-title">Delete Expense?</div>
             <div className="confirm-desc">
               You are about to permanently delete <strong>"{deleteTarget.title}"</strong> for <strong>₹{deleteTarget.amount.toLocaleString()}</strong>.<br /><br />
@@ -2550,13 +2897,13 @@ function Expenses() {
       )}
 
       {/* ── Edit Modal ─────────────────────────────────── */}
-      {editExp && <AddExpenseModal onClose={() => setEditExp(null)} editExpense={editExp} />}
+      {editExp && <AddExpenseFlow onClose={() => setEditExp(null)} editExpense={editExp} />}
     </div>
   );
 }
 function PartialSettleModal({ s, groupId, onClose, onRefresh }) {
   const [amount, setAmount] = useState(s.amount);
-  const { recordSettlement, loading } = useExpenseStore();
+  const { recordSettlement, settleLoading } = useExpenseStore();
 
   const handleSettle = async () => {
     if (!amount || amount <= 0) return toast.error("Enter valid amount");
@@ -2578,10 +2925,10 @@ function PartialSettleModal({ s, groupId, onClose, onRefresh }) {
 
   return (
     <div className="modal-overlay">
-      <div className="modal">
+      <div className="modal" style={{ width: 'min(95vw, 420px)', borderRadius: 20, maxHeight: '90vh' }}>
         <div className="modal-header">
           <div className="modal-title">Partial Settlement</div>
-          <div className="modal-close" onClick={onClose}>✕</div>
+          <div className="modal-close" onClick={onClose}><X size={20} /></div>
         </div>
         <div style={{ marginBottom: 20, textAlign: 'center' }}>
           <div style={{ fontSize: 13, color: 'var(--tx2)', marginBottom: 8 }}>Settling payment from <strong>{s.from_name}</strong> to <strong>{s.to_name}</strong></div>
@@ -2591,10 +2938,36 @@ function PartialSettleModal({ s, groupId, onClose, onRefresh }) {
           <label className="form-label">Amount to Settle</label>
           <input className="form-input" type="number" value={amount} onChange={e => setAmount(e.target.value)} autoFocus />
         </div>
-        <div className="add-footer">
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSettle} disabled={loading}>
-            {loading ? "Settle..." : `Settle ₹${amount}`}
+        <div className="settle-modal-footer">
+          <button className="btn btn-ghost" onClick={onClose} style={{ flex: 1, padding: '14px', borderRadius: 14, fontWeight: 600 }}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSettle} disabled={settleLoading} style={{ flex: 1.5, padding: '14px', borderRadius: 14, fontWeight: 700, fontSize: 16 }}>
+            {settleLoading ? "Settling..." : `Settle ₹${amount}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmSettleModal({ settle, onClose, onConfirm, loading }) {
+  if (!settle) return null;
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ width: 'min(95vw, 420px)', borderRadius: 20, maxHeight: '90vh' }}>
+        <div className="modal-header">
+          <div className="modal-title">Confirm Settlement</div>
+          <div className="modal-close" onClick={onClose}><X size={20} /></div>
+        </div>
+        <div style={{ padding: "20px 0", textAlign: "center" }}>
+          <div style={{ fontSize: 15, color: "var(--tx2)", marginBottom: 16, lineHeight: 1.6 }}>
+            Are you sure you want to settle <strong style={{ color: "var(--tx)" }}>₹{settle.amount?.toLocaleString()}</strong> from <strong style={{ color: "var(--tx)" }}>{settle.from_name}</strong> to <strong style={{ color: "var(--tx)" }}>{settle.to_name}</strong>?
+          </div>
+          <div style={{ fontSize: 36, fontWeight: 800, color: "var(--lime)", fontFamily: "var(--fd)" }}>₹{settle.amount?.toLocaleString()}</div>
+        </div>
+        <div className="settle-modal-footer">
+          <button className="btn btn-ghost" onClick={onClose} style={{ flex: 1, padding: '14px', borderRadius: 14, fontWeight: 600 }}>Cancel</button>
+          <button className="btn btn-primary" onClick={onConfirm} disabled={loading} style={{ flex: 1.5, padding: '14px', borderRadius: 14, fontWeight: 700, fontSize: 16 }}>
+            {loading ? 'Processing...' : 'Confirm Settlement'}
           </button>
         </div>
       </div>
@@ -2605,11 +2978,12 @@ function PartialSettleModal({ s, groupId, onClose, onRefresh }) {
 function Settle({ group }) {
   const { groups } = useGroupStore();
   const { user } = useAuthStore();
-  const { userNetPositions, settlePlans, fetchSettlePlan, recordSettlement, loading, error, debugData, allExpenses, settleHistory } = useExpenseStore();
+  const { userNetPositions, settlePlans, fetchSettlePlan, recordSettlement, undoSettlement, loading, settleLoading, error, debugData, allExpenses, settleHistory, balances = [] } = useExpenseStore();
   const [selectedGroupId, setSelectedGroupId] = useState(group?._id || 'all');
   const [tab, setTab] = useState('all'); // all, receivable, payable, settled
   const [partialSettle, setPartialSettle] = useState(null);
   const [confirmSettle, setConfirmSettle] = useState(null);
+  const [confirmUndo, setConfirmUndo] = useState(null);
   const [expandedUsers, setExpandedUsers] = useState({});
 
   const { netBalance, toReceiveTotal: receiveAmount, toPayTotal: payAmount, rawPlan: settlePlan } = useCentralBalance(selectedGroupId);
@@ -2638,6 +3012,16 @@ function Settle({ group }) {
       fetchSettlePlan(selectedGroupId);
       if (selectedGroupId !== 'all') fetchSettlePlan('all');
     } catch (err) { toast.error('Settlement failed: ' + err.message); }
+  };
+
+  const handleUndo = async () => {
+    if (!confirmUndo) return;
+    try {
+      await undoSettlement(confirmUndo._id, selectedGroupId);
+      toast.success('Settlement reversed successfully!');
+      setConfirmUndo(null);
+      fetchSettlePlan(selectedGroupId);
+    } catch (err) { toast.error('Undo failed: ' + err.message); }
   };
 
   const toggleExpand = (name) => {
@@ -2684,10 +3068,13 @@ function Settle({ group }) {
       <div className="form-row" style={{ marginBottom: 18 }}>
         <div className="form-group" style={{ flex: 1 }}>
           <label className="form-label">Select Group</label>
-          <select className="form-select" value={selectedGroupId} onChange={e => setSelectedGroupId(e.target.value)}>
-            <option value="all">All Groups (Combined)</option>
-            {groups.map(g => <option key={g._id} value={g._id}>{g.emoji} {g.name}</option>)}
-          </select>
+          <div style={{ width: '100%', overflow: 'hidden' }}>
+            <GroupChipNav 
+              selectedGroupId={selectedGroupId}
+              onSelect={(g) => setSelectedGroupId(g._id)}
+              allowAll={true}
+            />
+          </div>
         </div>
       </div>
 
@@ -2713,7 +3100,7 @@ function Settle({ group }) {
               </div>
             </div>
           </div>
-          <div style={{ fontSize: 80, opacity: 0.05, position: 'absolute', right: -10, bottom: -20, pointerEvents: 'none' }}>💳</div>
+          <div style={{ opacity: 0.05, position: 'absolute', right: -10, bottom: -20, pointerEvents: 'none', display: 'flex' }}><Wallet size={80} /></div>
         </div>
       </div>
 
@@ -2739,7 +3126,7 @@ function Settle({ group }) {
         <>
           {loading && <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--tx3)' }}>Loading...</div>}
           {isAllSettled && <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--tx3)' }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>✨</div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, color: 'var(--tx3)' }}><Sparkles size={48} /></div>
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--tx)', marginBottom: 8 }}>Everything is Settled!</div>
             <div style={{ fontSize: 14 }}>You're all caught up with your balances.</div>
           </div>}
@@ -2768,9 +3155,9 @@ function Settle({ group }) {
                         <div style={{ fontSize: 10, color: 'var(--tx3)', marginTop: 4, textTransform: 'uppercase', fontWeight: 700 }}>Pending</div>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="btn" style={{ flex: 1, background: 'var(--bg-glass)', border: '1px solid var(--border)', color: 'var(--tx)', minHeight: 44 }} onClick={() => setPartialSettle(s)}>Partial</button>
-                      <button className="btn" style={{ flex: 1, background: isPayable ? 'rgba(255,95,203,0.1)' : 'rgba(61,232,208,0.1)', border: 'none', color: isPayable ? 'var(--pink)' : 'var(--cyan)', minHeight: 44 }} onClick={() => handleMarkPaid(s)}>
+                    <div className="action-row">
+                      <button className="action-btn ghost" onClick={() => setPartialSettle(s)}>Partial</button>
+                      <button className="action-btn primary" style={{ background: isPayable ? 'rgba(255,95,203,0.15)' : 'rgba(61,232,208,0.15)', color: isPayable ? 'var(--pink)' : 'var(--cyan)' }} onClick={() => handleMarkPaid(s)}>
                         {isPayable ? 'Pay' : 'Remind'}
                       </button>
                     </div>
@@ -2822,27 +3209,30 @@ function Settle({ group }) {
           </div>
         </>
       ) : (
-        <div className="history-timeline" style={{ position: 'relative', paddingLeft: 16 }}>
-          <div style={{ position: 'absolute', left: 24, top: 0, bottom: 0, width: 2, background: 'var(--border)' }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {settleHistory.length === 0 && <div style={{ textAlign: 'center', color: 'var(--tx3)', padding: '40px 0' }}>No settlement history yet.</div>}
-          {settleHistory.map((h, i) => {
+          {settleHistory.map((h) => {
             const isPayer = h.from_name?.toLowerCase() === user?.full_name?.toLowerCase();
             const isReceiver = h.to_name?.toLowerCase() === user?.full_name?.toLowerCase();
+            const isReversed = h.status === 'reversed';
             let text = `${h.from_name} paid ${h.to_name}`;
             if (isPayer) text = `You settled with ${h.to_name}`;
             if (isReceiver) text = `${h.from_name} paid you`;
 
             return (
-              <div key={h._id} style={{ position: 'relative', padding: '16px 0 16px 36px', borderBottom: i < settleHistory.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                <div style={{ position: 'absolute', left: 4, top: 22, width: 8, height: 8, borderRadius: '50%', background: 'var(--lime)', boxShadow: '0 0 10px var(--lime)' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', marginBottom: 4 }}>{text}</div>
-                    <div style={{ fontSize: 11, color: 'var(--tx3)' }}>{new Date(h.settled_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · {h.method}</div>
+              <div key={h._id} className={`settle-history-item ${isReversed ? 'reversed' : ''}`}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: isReversed ? 'rgba(255,255,255,0.05)' : 'rgba(181,255,77,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: isReversed ? 'var(--tx3)' : 'var(--lime)' }}>{isReversed ? <RefreshCw size={16} /> : <Check size={16} />}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: isReversed ? 'var(--tx3)' : 'var(--tx)', textDecoration: isReversed ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{text}</div>
+                    <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 2 }}>{new Date(h.settled_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · {h.method}</div>
+                    {isReversed && h.updatedAt && <div style={{ fontSize: 10, color: '#ff6060', fontWeight: 600, marginTop: 2 }}>Reversed {new Date(h.updatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit' })}</div>}
                   </div>
-                  <div style={{ fontFamily: 'var(--fn)', fontSize: 16, fontWeight: 700, color: 'var(--lime)', fontFeatureSettings: '"tnum"', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em', lineHeight: 1 }}>
-                    ₹{h.amount.toLocaleString()}
-                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                  <div style={{ fontFamily: 'var(--fn)', fontSize: 16, fontWeight: 700, color: isReversed ? 'var(--tx3)' : 'var(--lime)', textDecoration: isReversed ? 'line-through' : 'none', fontFeatureSettings: '"tnum"', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em' }}>₹{h.amount.toLocaleString()}</div>
+                  {isReversed ? <span className="status-badge reversed" style={{ display: 'flex', alignItems: 'center', gap: 4 }}><RefreshCw size={12} /> Reversed</span> : <span className="status-badge completed" style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Check size={12} /> Completed</span>}
+                  {!isReversed && <button className="action-btn danger sm" style={{ padding: '6px 12px', minHeight: 32 }} onClick={() => setConfirmUndo(h)}>Undo</button>}
                 </div>
               </div>
             );
@@ -2863,21 +3253,34 @@ function Settle({ group }) {
       )}
 
       {confirmSettle && (
-        <div className="modal-overlay" onClick={() => setConfirmSettle(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+        <ConfirmSettleModal 
+          settle={confirmSettle} 
+          onClose={() => setConfirmSettle(null)} 
+          onConfirm={executeSettle} 
+          loading={settleLoading} 
+        />
+      )}
+
+      {confirmUndo && (
+        <div className="modal-overlay" onClick={() => setConfirmUndo(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ width: 'min(95vw, 420px)', borderRadius: 20, maxHeight: '90vh' }}>
             <div className="modal-header">
-              <div className="modal-title">Confirm Settlement</div>
-              <div className="modal-close" onClick={() => setConfirmSettle(null)}>✕</div>
+              <div className="modal-title">Undo Settlement</div>
+              <div className="modal-close" onClick={() => setConfirmUndo(null)}><X size={20} /></div>
             </div>
             <div style={{ padding: "20px 0", textAlign: "center" }}>
               <div style={{ fontSize: 15, color: "var(--tx2)", marginBottom: 16, lineHeight: 1.6 }}>
-                Are you sure you want to settle <strong style={{ color: "var(--tx)" }}>₹{confirmSettle.amount?.toLocaleString()}</strong> from <strong style={{ color: "var(--tx)" }}>{confirmSettle.from_name}</strong> to <strong style={{ color: "var(--tx)" }}>{confirmSettle.to_name}</strong>?
+                Are you sure you want to reverse the settlement of <strong style={{ color: "var(--tx)" }}>₹{confirmUndo.amount?.toLocaleString()}</strong>?
               </div>
-              <div style={{ fontSize: 36, fontWeight: 800, color: "var(--lime)", fontFamily: "var(--fd)" }}>₹{confirmSettle.amount?.toLocaleString()}</div>
+              <div style={{ fontSize: 13, color: "var(--tx3)" }}>
+                This will immediately restore the pending debt across the group.
+              </div>
             </div>
-            <div className="add-footer">
-              <button className="btn btn-ghost" onClick={() => setConfirmSettle(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={() => executeSettle()}>Confirm Settlement</button>
+            <div className="settle-modal-footer">
+              <button className="btn btn-ghost" onClick={() => setConfirmUndo(null)} style={{ flex: 1, padding: '14px', borderRadius: 14, fontWeight: 600 }}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleUndo} disabled={settleLoading} style={{ background: '#ff3b5c', color: '#fff', flex: 1.5, padding: '14px', borderRadius: 14, fontWeight: 700, fontSize: 16, border: 'none' }}>
+                {settleLoading ? 'Processing...' : 'Reverse Settlement'}
+              </button>
             </div>
           </div>
         </div>
@@ -2885,9 +3288,171 @@ function Settle({ group }) {
     </div>
   );
 }
-function Reports() {
-  const { allExpenses, fetchAllExpenses, settleHistory, fetchSettlementHistory, expenses } = useExpenseStore();
+function MoreMobile({ nav }) {
+  const { user, logout } = useAuthStore();
+  const userBalances = useCentralBalance('all');
+  const pendingDues = userBalances.toPayTotal > 0 ? userBalances.toPayList.length : 0;
+  
+  const [showSignOut, setShowSignOut] = useState(false);
+  
+  const handleLogout = () => {
+    logout();
+    nav('landing');
+  };
+
+  const menuRowStyle = { display: 'flex', alignItems: 'center', padding: '16px', cursor: 'pointer', borderBottom: '1px solid var(--border)', gap: 14 };
+  const iconWrapStyle = (color) => ({ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: 12, background: `rgba(${color}, 0.14)`, color: `rgb(${color})` });
+
+  return (
+    <div style={{ paddingBottom: 20 }}>
+      {/* Profile Card */}
+      <div className="card" onClick={() => nav('profile')} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16, padding: 16, marginBottom: 24, cursor: 'pointer' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="avatar" style={{ width: 48, height: 48, fontSize: 20, background: 'linear-gradient(135deg, var(--lime), #3de8d0)', color: '#000', fontWeight: 800 }}>{(user?.full_name || "User")[0]?.toUpperCase()}</div>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--tx)' }}>{user?.full_name || "User"}</div>
+              <div style={{ fontSize: 12, color: 'var(--tx3)' }}>{user?.role || "Admin"}</div>
+            </div>
+          </div>
+          <ChevronRight size={20} color="var(--tx3)" />
+        </div>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ flex: 1, padding: 12, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--tx3)', textTransform: 'uppercase', fontWeight: 700 }}>Net Balance</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: userBalances.netBalance >= 0 ? 'var(--lime)' : 'var(--rose)' }}>{userBalances.netBalance > 0 ? '+' : ''}₹{userBalances.netBalance.toLocaleString()}</div>
+          </div>
+          <div style={{ flex: 1, padding: 12, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--tx3)', textTransform: 'uppercase', fontWeight: 700 }}>Pending Dues</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: pendingDues > 0 ? 'var(--rose)' : 'var(--tx)' }}>{pendingDues}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingLeft: 8 }}>Tools</div>
+      <div className="card" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16, marginBottom: 24, overflow: 'hidden' }}>
+        <div style={menuRowStyle} onClick={() => nav('reports')}>
+          <div style={iconWrapStyle('34, 212, 122')}><BarChart3 size={20} /></div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--tx)', marginBottom: 2 }}>Insights</div>
+            <div style={{ fontSize: 12, color: 'var(--tx3)' }}>Spending trends & reports</div>
+          </div>
+          <ChevronRight size={20} color="var(--tx3)" />
+        </div>
+        <div style={menuRowStyle} onClick={() => nav('utilities')}>
+          <div style={iconWrapStyle('61, 232, 208')}><Calendar size={20} /></div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--tx)', marginBottom: 2 }}>Utilities</div>
+            <div style={{ fontSize: 12, color: 'var(--tx3)' }}>Budget, bills & grocery list</div>
+          </div>
+          <ChevronRight size={20} color="var(--tx3)" />
+        </div>
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingLeft: 8 }}>Account</div>
+      <div className="card" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16, marginBottom: 24, overflow: 'hidden' }}>
+        <div style={menuRowStyle} onClick={() => nav('settings')}>
+          <div style={iconWrapStyle('139, 139, 153')}><SettingsIcon size={20} /></div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--tx)', marginBottom: 2 }}>Settings</div>
+            <div style={{ fontSize: 12, color: 'var(--tx3)' }}>Preferences, currency, theme</div>
+          </div>
+          <ChevronRight size={20} color="var(--tx3)" />
+        </div>
+        <div style={{ ...menuRowStyle, borderBottom: 'none' }} onClick={() => nav('profile')}>
+          <div style={iconWrapStyle('139, 139, 153')}><Users size={20} /></div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--tx)', marginBottom: 2 }}>My Profile</div>
+            <div style={{ fontSize: 12, color: 'var(--tx3)' }}>Edit name, photo & email</div>
+          </div>
+          <ChevronRight size={20} color="var(--tx3)" />
+        </div>
+      </div>
+
+      <div className="card" onClick={() => setShowSignOut(true)} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer', marginBottom: 32 }}>
+        <LogOut size={18} color="var(--rose)" />
+        <span style={{ fontSize: 15, fontWeight: 700, color: "var(--rose)" }}>Log Out</span>
+      </div>
+
+      <div style={{ textAlign: 'center', color: 'var(--tx3)', fontSize: 11 }}>
+        SplitBuddy v2.1.4<br />
+        Made with ♥ in India
+      </div>
+
+      {showSignOut && (
+        <div className="modal-overlay" onClick={() => setShowSignOut(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">Sign Out</div>
+              <div className="modal-close" onClick={() => setShowSignOut(false)}>✕</div>
+            </div>
+            <div style={{ color: 'var(--tx2)', fontSize: 14, marginBottom: 20 }}>
+              Are you sure you want to sign out of SplitBuddy?
+            </div>
+            <div className="add-footer">
+              <button className="btn btn-ghost" onClick={() => setShowSignOut(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleLogout}>Sign Out</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProfilePage({ nav }) {
+  const { user, updateProfile } = useAuthStore();
+  const [userName, setUserName] = useState(user?.full_name || "User");
+  const [upiId, setUpiId] = useState(user?.upi_id || "");
+  const [editMode, setEditMode] = useState(false);
+
+  const saveProfile = async () => {
+    try {
+      await updateProfile({ full_name: userName, upi_id: upiId });
+      setEditMode(false);
+      toast.success('Profile updated!');
+    } catch (err) { toast.error(err.message); }
+  };
+
+  return (
+    <div style={{ paddingBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, cursor: 'pointer' }} onClick={() => nav('more')}>
+        <ChevronLeft size={24} color="var(--tx)" />
+        <h2 className="fd" style={{ fontSize: 24, fontWeight: 800 }}>My Profile</h2>
+      </div>
+
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px 16px', gap: 16 }}>
+        <div className="avatar" style={{ width: 80, height: 80, fontSize: 32, background: 'linear-gradient(135deg, var(--lime), #3de8d0)', color: '#000', fontWeight: 800 }}>{(user?.full_name || "User")[0]?.toUpperCase()}</div>
+        <div style={{ textAlign: 'center', width: '100%' }}>
+          {editMode ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', width: '100%' }}>
+              <input className="form-input" value={userName} onChange={e => setUserName(e.target.value)} placeholder="Full Name" style={{ maxWidth: 280 }} />
+              <input className="form-input" value={upiId} onChange={e => setUpiId(e.target.value)} placeholder="UPI ID" style={{ maxWidth: 280 }} />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-sm btn-ghost" onClick={() => setEditMode(false)}>Cancel</button>
+                <button className="btn btn-sm btn-primary" onClick={saveProfile}>Save</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--tx)', marginBottom: 4 }}>{user?.full_name || "User"}</div>
+              <div style={{ fontSize: 14, color: 'var(--tx3)', marginBottom: 8 }}>{user?.email}</div>
+              {user?.upi_id && <div style={{ fontSize: 13, color: 'var(--tx2)', background: 'var(--bg-glass)', padding: '4px 12px', borderRadius: 12, display: 'inline-block', border: '1px solid var(--border)' }}>UPI: {user.upi_id}</div>}
+              <div style={{ marginTop: 16 }}>
+                <button className="btn btn-sm btn-ghost" onClick={() => setEditMode(true)}>Edit Profile</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Reports({ nav, openModal }) {
+  const { allExpenses, fetchAllExpenses, settleHistory, fetchSettlementHistory, expenses, fetchSettlePlan } = useExpenseStore();
   const { groups } = useGroupStore();
+  const authUser = useAuthStore(s => s.user);
 
   const [groupId, setGroupId] = useState('all');
   const [timeRange, setTimeRange] = useState('month');
@@ -2897,15 +3462,12 @@ function Reports() {
     let from = new Date();
     from.setHours(0, 0, 0, 0);
     switch (range) {
-      case 'today': break;
-      case 'week': from.setDate(now.getDate() - 7); break;
-      case 'month': from.setMonth(now.getMonth() - 1); break;
-      case 'last_month':
-        from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const to = new Date(now.getFullYear(), now.getMonth(), 0);
-        return { from, to };
-      case 'year': from.setFullYear(now.getFullYear() - 1); break;
+      case '7days': from.setDate(now.getDate() - 7); break;
+      case '30days': from.setDate(now.getDate() - 30); break;
+      case 'month': from = new Date(now.getFullYear(), now.getMonth(), 1); break;
+      case 'year': from = new Date(now.getFullYear(), 0, 1); break;
       case 'all': return { from: null, to: null };
+      default: from = new Date(now.getFullYear(), now.getMonth(), 1); break;
     }
     return { from, to: now };
   };
@@ -2916,187 +3478,359 @@ function Reports() {
     if (groupId !== 'all') filters.group_id = groupId;
     if (from) filters.from_date = from.toISOString();
     if (to) filters.to_date = to.toISOString();
-
     fetchAllExpenses(filters);
     fetchSettlementHistory(groupId === 'all' ? undefined : groupId);
-  }, [groupId, timeRange, fetchAllExpenses, fetchSettlementHistory, expenses.length]);
+    fetchSettlePlan(groupId);
+  }, [groupId, timeRange, fetchAllExpenses, fetchSettlementHistory, expenses.length, fetchSettlePlan]);
+
+  const { netBalance, toReceiveTotal, toPayTotal, toReceiveList, toPayList, rawPlan } = useCentralBalance(groupId);
+  const pendingSettlementsCount = toReceiveList.length + toPayList.length;
 
   const stats = useMemo(() => {
-    const total = allExpenses.reduce((s, e) => s + e.amount, 0);
-    const count = allExpenses.length;
-
-    const cats = {};
-    allExpenses.forEach(e => {
-      const l = e.category ? e.category.charAt(0).toUpperCase() + e.category.slice(1) : "Other";
-      cats[l] = (cats[l] || 0) + e.amount;
-    });
-    const donutData = Object.entries(cats).map(([l, v]) => ({ l, v, c: CATS.find(c => c.label === l)?.color || "#9b6dff" }));
-
-    const members = {};
-    allExpenses.forEach(e => {
-      const name = e.paid_by_name || e.paid_by?.full_name || "Member";
-      members[name] = (members[name] || 0) + e.amount;
-    });
-    const barData = Object.entries(members).sort((a, b) => b[1] - a[1]);
-
-    const trend = [];
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const mLabel = d.toLocaleString('default', { month: 'short' });
-      const mVal = allExpenses.filter(e => {
-        const ed = new Date(e.expense_date);
-        return ed.getMonth() === d.getMonth() && ed.getFullYear() === d.getFullYear();
-      }).reduce((s, e) => s + e.amount, 0);
-      trend.push({ m: mLabel, v: mVal });
-    }
-
-    const highestCat = donutData.length > 0 ? donutData.sort((a, b) => b.v - a.v)[0] : null;
-
-    // Calculate most active based on count
-    const activityCounts = {};
-    allExpenses.forEach(e => {
-      const name = e.paid_by_name || e.paid_by?.full_name || "Member";
-      activityCounts[name] = (activityCounts[name] || 0) + 1;
-    });
-    const countsData = Object.entries(activityCounts).sort((a, b) => b[1] - a[1]);
-    const mostActive = countsData.length > 0 ? countsData[0][0] : "N/A";
-
-    const avgSpend = count > 0 ? total / count : 0;
-
-    // Group and Date-specific settlement logic
     const { from, to } = getDateRange(timeRange);
-    const totalSettled = settleHistory
-      .filter(h => {
-        const matchGroup = groupId === 'all' || (h.group?._id || h.group) === groupId;
-        if (!matchGroup) return false;
-        if (!from) return true;
-        const hd = new Date(h.settled_at);
-        return hd >= from && hd <= to;
-      })
-      .reduce((s, h) => s + h.amount, 0);
+    const filteredExpenses = allExpenses.filter(e => {
+      if (groupId !== 'all' && (e.group?._id || e.group) !== groupId) return false;
+      if (from) { const ed = new Date(e.expense_date); if (ed < from || (to && ed > to)) return false; }
+      return true;
+    });
+    const total = filteredExpenses.reduce((s, e) => s + e.amount, 0);
+    const cats = {};
+    filteredExpenses.forEach(e => { const l = e.category ? e.category.charAt(0).toUpperCase() + e.category.slice(1) : "Other"; cats[l] = (cats[l] || 0) + e.amount; });
+    const categoryData = Object.entries(cats).sort((a, b) => b[1] - a[1]);
+    const topCategory = categoryData.length > 0 ? categoryData[0] : null;
+    const members = {};
+    filteredExpenses.forEach(e => { const name = e.paid_by_name || e.paid_by?.full_name || "Member"; members[name] = (members[name] || 0) + e.amount; });
+    const topSpenders = Object.entries(members).sort((a, b) => b[1] - a[1]);
+    const topSpender = topSpenders.length > 0 ? topSpenders[0] : null;
+    const largestExpense = filteredExpenses.length > 0 ? [...filteredExpenses].sort((a, b) => b.amount - a.amount)[0] : null;
+    const groupTotals = {};
+    filteredExpenses.forEach(e => { const gName = groups.find(g => g._id === (e.group?._id || e.group))?.name || "Other"; groupTotals[gName] = (groupTotals[gName] || 0) + e.amount; });
+    const activeGroupArr = Object.entries(groupTotals).sort((a, b) => b[1] - a[1]);
+    const mostActiveGroup = activeGroupArr.length > 0 ? activeGroupArr[0][0] : "None";
 
-    const safeSettled = Math.min(totalSettled, total);
+    // ALL settlements (completed + reversed) for bank statement
+    const allSettlements = settleHistory.filter(h => {
+      const matchGroup = groupId === 'all' || (h.group?._id || h.group) === groupId;
+      if (!matchGroup) return false;
+      if (!from) return true;
+      const hd = new Date(h.settled_at);
+      return hd >= from && hd <= to;
+    }).sort((a, b) => new Date(b.settled_at) - new Date(a.settled_at));
 
-    return { total, count, donutData, barData, trend, highestCat, mostActive, avgSpend, totalSettled, safeSettled };
-  }, [allExpenses, settleHistory, groupId, timeRange]);
+    const insights = [];
+    if (topCategory && total > 0) { const pct = Math.round((topCategory[1] / total) * 100); insights.push(`${topCategory[0]} accounts for ${pct}% of this period's spending.`); }
+    if (pendingSettlementsCount === 1) insights.push("You have exactly one pending settlement to resolve.");
+    else if (pendingSettlementsCount === 0) insights.push("All your settlements are completely up to date.");
+    if (toReceiveTotal > 0) insights.push(`You need to collect a total of \u20B9${toReceiveTotal.toLocaleString()}.`);
+    if (mostActiveGroup && mostActiveGroup !== "None") insights.push(`${mostActiveGroup} is your most active group right now.`);
+    if (topSpender) insights.push(`${topSpender[0]} contributed the highest amount (\u20B9${topSpender[1].toLocaleString()}).`);
 
-  const exportData = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
-      summary: { total: stats.total, count: stats.count },
-      expenses: allExpenses
-    }));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `splitbuddy_report_${new Date().toISOString().split('T')[0]}.json`);
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
-    toast.success("Report exported as JSON! 📥");
+    return { total, topSpender, largestExpense, mostActiveGroup, allSettlements, insights };
+  }, [allExpenses, settleHistory, groups, groupId, timeRange, pendingSettlementsCount, toReceiveTotal]);
+
+  const exportReport = (format) => {
+    try {
+      const data = allExpenses.map(e => ({
+        Date: new Date(e.created_at).toLocaleDateString(),
+        Description: e.title || e.description || 'Expense',
+        Amount: e.amount,
+        Category: e.category,
+        PaidBy: e.paid_by_name || e.paid_by?.full_name || 'Unknown'
+      }));
+
+      const settleData = stats.allSettlements.map(s => ({
+        Date: new Date(s.settled_at).toLocaleDateString(),
+        Description: `Settlement: ${s.from_name || s.paid_by?.full_name} paid ${s.to_name || s.paid_to?.full_name}`,
+        Amount: s.amount,
+        Status: s.status === 'reversed' ? 'Reversed' : 'Completed'
+      }));
+
+      if (data.length === 0 && settleData.length === 0) {
+        toast.error("No data to export");
+        return;
+      }
+
+      if (format === 'csv') {
+        let csv = "";
+        if (data.length > 0) {
+          const headers = Object.keys(data[0]).join(',');
+          const rows = data.map(obj => Object.values(obj).map(v => `"${v}"`).join(',')).join('\n');
+          csv += `--- Expenses ---\n${headers}\n${rows}\n\n`;
+        }
+        if (settleData.length > 0) {
+          const headers = Object.keys(settleData[0]).join(',');
+          const rows = settleData.map(obj => Object.values(obj).map(v => `"${v}"`).join(',')).join('\n');
+          csv += `--- Settlements ---\n${headers}\n${rows}`;
+        }
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `splitbuddy_export_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      } else if (format === 'pdf') {
+        const doc = new jsPDF();
+        doc.text("SplitBuddy - Expense Report", 14, 15);
+        doc.setFontSize(10);
+        doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 22);
+        
+        let startY = 28;
+        if (data.length > 0) {
+          doc.text("Expenses", 14, startY);
+          doc.autoTable({
+            startY: startY + 4,
+            head: [Object.keys(data[0])],
+            body: data.map(Object.values),
+            theme: 'striped'
+          });
+          startY = doc.lastAutoTable.finalY + 15;
+        }
+        
+        if (settleData.length > 0) {
+          doc.text("Settlements", 14, startY);
+          doc.autoTable({
+            startY: startY + 4,
+            head: [Object.keys(settleData[0])],
+            body: settleData.map(Object.values),
+            theme: 'striped'
+          });
+        }
+        
+        doc.save(`splitbuddy_export_${new Date().toISOString().split('T')[0]}.pdf`);
+      } else if (format === 'xlsx') {
+        const wb = XLSX.utils.book_new();
+        if (data.length > 0) {
+          const ws = XLSX.utils.json_to_sheet(data);
+          XLSX.utils.book_append_sheet(wb, ws, "Expenses");
+        }
+        if (settleData.length > 0) {
+          const wsSettle = XLSX.utils.json_to_sheet(settleData);
+          XLSX.utils.book_append_sheet(wb, wsSettle, "Settlements");
+        }
+        XLSX.writeFile(wb, `splitbuddy_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+      }
+      toast.success(`Exported as ${format.toUpperCase()}!`);
+    } catch (err) {
+      console.error("Export Error:", err);
+      toast.error(err.message || "Failed to export");
+    }
   };
 
+  const handleUndo = async (id, gid) => {
+    try { await useExpenseStore.getState().undoSettlement(id, gid); toast.success("Settlement reversed"); }
+    catch (err) { toast.error(err.message || "Failed to undo"); }
+  };
+
+  const [confirmSettle, setConfirmSettle] = useState(null);
+  const { settleLoading } = useExpenseStore();
+
+  const handleSettle = (t) => {
+    setConfirmSettle(t);
+  };
+
+  const executeSettle = async () => {
+    if (!confirmSettle) return;
+    try {
+      await useExpenseStore.getState().recordSettlement({
+        group_id: groupId === 'all' ? undefined : groupId,
+        from_id: confirmSettle.from_id,
+        from_name: confirmSettle.from_name,
+        to_id: confirmSettle.to_id,
+        to_name: confirmSettle.to_name,
+        amount: confirmSettle.amount
+      });
+      toast.success('Settlement recorded successfully!');
+      setConfirmSettle(null);
+    } catch (err) {
+      toast.error('Settlement failed: ' + err.message);
+    }
+  };
+
+  const chipStyle = (active) => ({ padding: '10px 20px', borderRadius: 24, whiteSpace: 'nowrap', fontSize: 14, fontWeight: 600, border: 'none', background: active ? 'var(--tx)' : 'var(--bg-card)', color: active ? 'var(--bg)' : 'var(--tx2)', transition: 'all 0.25s ease', cursor: 'pointer', flexShrink: 0 });
+
   return (
-    <div className="reports-view">
-      <div className="reports-header">
-        <h2 className="topbar-title">Reports & Analytics 📈</h2>
-        <div className="reports-filters">
-          <select className="form-select" style={{ width: 150 }} value={groupId} onChange={e => setGroupId(e.target.value)}>
-            <option value="all">All Groups</option>
-            {groups.map(g => <option key={g._id} value={g._id}>{g.emoji} {g.name}</option>)}
-          </select>
-          <select className="form-select" style={{ width: 140 }} value={timeRange} onChange={e => setTimeRange(e.target.value)}>
-            <option value="today">Today</option>
-            <option value="week">This Week</option>
-            <option value="month">This Month</option>
-            <option value="last_month">Last Month</option>
-            <option value="year">Last Year</option>
-            <option value="all">All Time</option>
-          </select>
-          <button className="btn btn-ghost btn-sm" onClick={exportData}>📥 Export</button>
-        </div>
-      </div>
+    <div style={{ maxWidth: 900, margin: '0 auto', padding: '16px 12px 100px 12px', display: 'flex', flexDirection: 'column', gap: 28 }}>
 
-      <div className="reports-grid">
-        <div className="report-stat-card">
-          <div className="report-stat-label">Total Expenses</div>
-          <div className="report-stat-val" style={{ color: 'var(--lime)' }}>₹{stats.total.toLocaleString()}</div>
-          <div className="report-stat-meta">{stats.count} expenses tracked</div>
-        </div>
-        <div className="report-stat-card">
-          <div className="report-stat-label">Average per Expense</div>
-          <div className="report-stat-val" style={{ color: 'var(--cyan)' }}>₹{Math.round(stats.avgSpend).toLocaleString()}</div>
-          <div className="report-stat-meta">Based on current filter</div>
-        </div>
-        <div className="report-stat-card">
-          <div className="report-stat-label">Total Settled</div>
-          <div className="report-stat-val" style={{ color: 'var(--violet)' }}>₹{stats.totalSettled.toLocaleString()}</div>
-          <div className="report-stat-meta">Payments recorded</div>
-        </div>
-        <div className="report-stat-card">
-          <div className="report-stat-label">Highest Category</div>
-          <div className="report-stat-val" style={{ color: 'var(--pink)' }}>{stats.highestCat?.l || "N/A"}</div>
-          <div className="report-stat-meta">₹{stats.highestCat?.v.toLocaleString() || 0} spent</div>
-        </div>
-      </div>
-
-      <div className="chart-grid">
-        <div className="chart-card">
-          <div className="chart-title">Category Distribution 🥧</div>
-          {stats.donutData.length > 0 ? <DonutChart data={stats.donutData} /> : <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx3)' }}>No data available</div>}
-        </div>
-        <div className="chart-card">
-          <div className="chart-title">Spending Trend (Monthly) 📈</div>
-          <TrendChart data={stats.trend} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10 }}>
-            {stats.trend.map(d => <span key={d.m} style={{ fontSize: 10, color: 'var(--tx3)' }}>{d.m}</span>)}
-          </div>
-        </div>
-      </div>
-
-      <div className="chart-card" style={{ marginBottom: 18 }}>
-        <div className="chart-title">
-          <span>Individual Contribution 👤</span>
-          <span style={{ fontSize: 11, color: 'var(--tx3)' }}>Top Spenders</span>
-        </div>
-        {stats.barData.length === 0 && <div style={{ textAlign: 'center', color: 'var(--tx3)', padding: '20px 0' }}>No spending data for this period.</div>}
-        <div className="bar-chart-v">
-          {stats.barData.map(([name, val], i) => (
-            <div className="bar-row" key={name}>
-              <div className="bar-label">{name}</div>
-              <div className="bar-track">
-                <div className="bar-fill-v" style={{
-                  width: `${(val / (stats.barData[0][1] || 1)) * 100}%`,
-                  background: `linear-gradient(90deg, ${i % 2 === 0 ? 'var(--violet)' : 'var(--lime)'}, transparent)`
-                }} />
-              </div>
-              <div className="bar-val">₹{val.toLocaleString()}</div>
-            </div>
+      {/* FILTER CHIPS */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4 }} className="hide-scroll">
+          {[{ id: '7days', lbl: '7 Days' }, { id: '30days', lbl: '30 Days' }, { id: 'month', lbl: 'This Month' }, { id: 'year', lbl: 'This Year' }, { id: 'all', lbl: 'All Time' }].map(t => (
+            <button key={t.id} onClick={() => setTimeRange(t.id)} style={chipStyle(timeRange === t.id)}>{t.lbl}</button>
           ))}
         </div>
+        <div style={{ width: '100%', overflow: 'hidden' }}>
+          <GroupChipNav 
+            selectedGroupId={groupId} 
+            onSelect={(g) => setGroupId(g._id)} 
+            allowAll={true} 
+            nav={nav} 
+          />
+        </div>
       </div>
 
-      <div className="card" style={{ background: 'rgba(255,255,255,0.02)' }}>
-        <div className="section-title" style={{ fontSize: 14, marginBottom: 12 }}>Advanced Insights 🔍</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+      {/* SECTION 1: HERO CARD */}
+      <div className="card" style={{ background: '#12121a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 24, padding: 'clamp(20px, 4vw, 32px)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           <div>
-            <div style={{ fontSize: 11, color: 'var(--tx3)', textTransform: 'uppercase', marginBottom: 4 }}>Most Active Member</div>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>{stats.mostActive}</div>
+            <div style={{ fontSize: 13, color: 'var(--tx3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Net Balance</div>
+            <div style={{ fontSize: 'clamp(32px, 8vw, 48px)', fontWeight: 800, color: netBalance >= 0 ? 'var(--lime)' : '#ff6060', fontFamily: 'var(--fd)', letterSpacing: '-1px', marginBottom: 20 }}>
+              {netBalance >= 0 ? '+' : '-'}{'\u20B9'}{Math.abs(netBalance).toLocaleString()}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 13, color: 'var(--tx3)', fontWeight: 600, marginBottom: 4 }}>To Receive</div>
+                <div style={{ fontSize: 20, color: 'var(--lime)', fontWeight: 700 }}>{'\u20B9'}{toReceiveTotal.toLocaleString()}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 13, color: 'var(--tx3)', fontWeight: 600, marginBottom: 4 }}>To Pay</div>
+                <div style={{ fontSize: 20, color: '#ff6060', fontWeight: 700 }}>{'\u20B9'}{toPayTotal.toLocaleString()}</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--tx2)', fontWeight: 500 }}>{pendingSettlementsCount} Pending Settlement{pendingSettlementsCount !== 1 ? 's' : ''}</div>
           </div>
-          <div>
-            <div style={{ fontSize: 11, color: 'var(--tx3)', textTransform: 'uppercase', marginBottom: 4 }}>Settlement Ratio</div>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>{stats.total > 0 ? Math.round((stats.safeSettled / stats.total) * 100) : 0}% settled</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 11, color: 'var(--tx3)', textTransform: 'uppercase', marginBottom: 4 }}>Pending Collections</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--amber)' }}>₹{Math.max(0, stats.total - stats.totalSettled).toLocaleString()}</div>
+          <div className="action-row">
+            <button className="action-btn primary" onClick={() => {
+              if (pendingSettlementsCount === 0) return toast("No pending settlements");
+              nav && nav('settle');
+            }}>Settle Now</button>
+            <button className="action-btn ghost" onClick={() => openModal && openModal()}>Add Expense</button>
           </div>
         </div>
       </div>
+
+      {/* SECTION 2: SMART INSIGHTS */}
+      {stats.insights.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Smart Insights</h3>
+          <div className="card" style={{ borderRadius: 20, padding: 20 }}>
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {stats.insights.map((ins, i) => (
+                <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 14, color: 'var(--tx)', lineHeight: 1.5, fontWeight: 500 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--lime)', marginTop: 7, flexShrink: 0 }} />
+                  {ins}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 3: PERIOD SUMMARY */}
+      <div>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Period Summary</h3>
+        <div className="card" style={{ borderRadius: 20, padding: 'clamp(16px, 3vw, 28px)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '24px 20px' }}>
+            <div><div style={{ fontSize: 12, color: 'var(--tx3)', fontWeight: 600, marginBottom: 6 }}>Total Spending</div><div style={{ fontSize: 22, fontWeight: 800, color: 'var(--tx)' }}>{'\u20B9'}{stats.total.toLocaleString()}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--tx3)', fontWeight: 600, marginBottom: 6 }}>Pending Amount</div><div style={{ fontSize: 22, fontWeight: 800, color: 'var(--amber)' }}>{'\u20B9'}{(toReceiveTotal + toPayTotal).toLocaleString()}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--tx3)', fontWeight: 600, marginBottom: 6 }}>Largest Expense</div><div style={{ fontSize: 15, fontWeight: 700, color: 'var(--tx)' }}>{stats.largestExpense ? `\u20B9${stats.largestExpense.amount.toLocaleString()}` : 'N/A'}</div><div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 2 }}>{stats.largestExpense?.description || ''}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--tx3)', fontWeight: 600, marginBottom: 6 }}>Most Active Group</div><div style={{ fontSize: 15, fontWeight: 700, color: 'var(--tx)' }}>{stats.mostActiveGroup}</div></div>
+            <div><div style={{ fontSize: 12, color: 'var(--tx3)', fontWeight: 600, marginBottom: 6 }}>Most Active Friend</div><div style={{ fontSize: 15, fontWeight: 700, color: 'var(--tx)' }}>{stats.topSpender ? stats.topSpender[0] : 'N/A'}</div></div>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION 4: SETTLEMENT CENTER */}
+      <div>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Settlement Center</h3>
+
+        {/* Pending To Receive */}
+        {toReceiveList.length > 0 && (
+          <div className="card" style={{ borderRadius: 20, padding: 20, marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--lime)', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Pending to Receive</div>
+            {toReceiveList.map((t, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toReceiveList.length - 1 ? 12 : 0, borderBottom: i < toReceiveList.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <div className="avatar sm" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>{t.from_avatar || t.from_name[0]}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.from_name}</div>
+                    <div style={{ fontSize: 13, color: 'var(--lime)', fontWeight: 700 }}>{'\u20B9'}{t.amount.toLocaleString()}</div>
+                  </div>
+                </div>
+                <button className="action-btn primary sm" onClick={() => handleSettle(t)}>Settle</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Pending To Pay */}
+        {toPayList.length > 0 && (
+          <div className="card" style={{ borderRadius: 20, padding: 20, marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#ff6060', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Pending to Pay</div>
+            {toPayList.map((t, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toPayList.length - 1 ? 12 : 0, borderBottom: i < toPayList.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <div className="avatar sm" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>{t.to_avatar || t.to_name[0]}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.to_name}</div>
+                    <div style={{ fontSize: 13, color: '#ff6060', fontWeight: 700 }}>{'\u20B9'}{t.amount.toLocaleString()}</div>
+                  </div>
+                </div>
+                <button className="action-btn ghost sm" onClick={() => handleSettle(t)}>Pay Now</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Settlement History - Bank Statement Style */}
+        {stats.allSettlements.length > 0 && (
+          <div className="card" style={{ borderRadius: 20, padding: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--tx)', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Settlement History</div>
+            {stats.allSettlements.slice(0, 8).map((s, i) => {
+              const isReversed = s.status === 'reversed';
+              const fromName = s.paid_by?.full_name || s.from_name || 'Member';
+              const toName = s.paid_to?.full_name || s.to_name || 'Member';
+              const settledDate = new Date(s.settled_at);
+              return (
+                <div key={s._id} className={`settle-history-item ${isReversed ? 'reversed' : ''}`}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1, width: '100%' }}>
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: isReversed ? 'rgba(255,255,255,0.05)' : 'rgba(181,255,77,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{isReversed ? <RefreshCw size={18} /> : <Check size={18} />}</div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: isReversed ? 'var(--tx3)' : 'var(--tx)', textDecoration: isReversed ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', whiteSpace: 'normal', wordBreak: 'break-word' }}>{fromName} paid {toName}</div>
+                      <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 2 }}>{settledDate.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+                      {isReversed && s.updatedAt && <div style={{ fontSize: 10, color: '#ff6060', fontWeight: 600, marginTop: 2 }}>Reversed {new Date(s.updatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit' })}</div>}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+                    <div style={{ fontFamily: 'var(--fn)', fontSize: 16, fontWeight: 700, color: isReversed ? 'var(--tx3)' : 'var(--lime)', textDecoration: isReversed ? 'line-through' : 'none', fontFeatureSettings: '"tnum"', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em' }}>{'\u20B9'}{s.amount.toLocaleString()}</div>
+                    {isReversed ? <span className="status-badge reversed"><RefreshCw size={10} /> Reversed</span> : <span className="status-badge completed"><Check size={10} /> Completed</span>}
+                    {!isReversed && <button className="action-btn danger sm" style={{ padding: '6px 12px', minHeight: 32 }} onClick={() => handleUndo(s._id, s.group?._id || s.group)}>Undo</button>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {toReceiveList.length === 0 && toPayList.length === 0 && stats.allSettlements.length === 0 && (
+          <div className="card" style={{ borderRadius: 20, padding: 24, textAlign: 'center', color: 'var(--tx3)' }}>No settlement data available.</div>
+        )}
+      </div>
+
+      {/* SECTION 5: EXPORT */}
+      <div className="card" style={{ borderRadius: 20, padding: 20 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)', marginBottom: 14 }}>Export Data</h3>
+        <div className="action-row insights-export-row">
+          <button className="action-btn ghost" onClick={() => exportReport('csv')}>Download CSV</button>
+          <button className="action-btn ghost" onClick={() => exportReport('pdf')}>Download PDF</button>
+          <button className="action-btn ghost" onClick={() => exportReport('xlsx')}>Download Excel</button>
+        </div>
+      </div>
+
+      {confirmSettle && (
+        <ConfirmSettleModal 
+          settle={confirmSettle} 
+          onClose={() => setConfirmSettle(null)} 
+          onConfirm={executeSettle} 
+          loading={settleLoading} 
+        />
+      )}
     </div>
   );
 }
 
-function SmartBudget({ group, expenses }) {
+
+function SmartBudget({ group, groupSpend }) {
   const { updateBudget } = useGroupStore();
   const [showEdit, setShowEdit] = useState(false);
   const [newBudget, setNewBudget] = useState(group.monthly_budget || 0);
@@ -3117,27 +3851,23 @@ function SmartBudget({ group, expenses }) {
   const now = new Date();
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const currentDay = now.getDate();
+  const daysRemaining = Math.max(1, daysInMonth - currentDay + 1);
 
-  const spent = expenses
-    .filter(e => {
-      const d = new Date(e.expense_date);
-      const gid = e.group?._id || e.group;
-      return gid === group._id && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    })
-    .reduce((s, e) => s + e.amount, 0);
+  // Single source of truth: use the same groupSpend calculated by the parent
+  const spent = groupSpend || 0;
 
   const remaining = Math.max(0, budget - spent);
+  const exceeded = spent > budget && budget > 0;
   const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
   const color = pct > 90 ? "#ff4d4d" : pct > 70 ? "var(--amber)" : "var(--lime)";
 
-  const dailyAllowance = remaining > 0 ? Math.round(remaining / (daysInMonth - currentDay + 1)) : 0;
-  const projected = Math.round((spent / currentDay) * daysInMonth);
+  const dailyAllowance = budget > 0 && daysRemaining > 0 ? Math.round(remaining / daysRemaining) : 0;
+  const projected = currentDay > 0 ? Math.round((spent / currentDay) * daysInMonth) : 0;
 
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     const parsedBudget = parseFloat(newBudget);
-    console.log('[SmartBudget] Save clicked. newBudget:', newBudget, '→ parsed:', parsedBudget);
 
     if (isNaN(parsedBudget) || parsedBudget < 0) {
       toast.error("Please enter a valid positive budget amount.");
@@ -3145,16 +3875,13 @@ function SmartBudget({ group, expenses }) {
     }
 
     setSaving(true);
-    console.log('[SmartBudget] Calling updateBudget with groupId:', group._id, 'budget:', parsedBudget);
 
     try {
-      const updatedGroup = await updateBudget(group._id, parsedBudget);
-      console.log('[SmartBudget] updateBudget returned:', updatedGroup?.monthly_budget);
+      await updateBudget(group._id, parsedBudget);
       setShowEdit(false);
-      toast.success("✅ Monthly Budget Updated Successfully");
+      toast.success("Monthly Budget Updated Successfully");
     } catch (err) {
-      console.error('[SmartBudget] Save error:', err);
-      toast.error(err?.message || "❌ Failed to save budget. Please try again.");
+      toast.error(err?.message || "Failed to save budget. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -3163,9 +3890,9 @@ function SmartBudget({ group, expenses }) {
   return (
     <div className="card util-card-v2">
       <div className="util-card-header">
-        <div className="util-card-title">📈 Smart Budget</div>
+        <div className="util-card-title"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: 'var(--tx2)' }}><Activity size={20} /></span> Smart Budget</div>
         {isAdmin && budget > 0 && !showEdit && (
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowEdit(true)}>✏️ Edit Budget</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowEdit(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}><FileText size={14} /> Edit Budget</button>
         )}
       </div>
       <div className="util-card-content">
@@ -3188,7 +3915,7 @@ function SmartBudget({ group, expenses }) {
           </div>
         ) : budget === 0 ? (
           <div style={{ textAlign: "center", padding: "30px 10px" }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>📊</div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, color: 'var(--tx3)' }}><Activity size={48} /></div>
             <div style={{ fontSize: 16, fontWeight: 700, color: "var(--tx)", marginBottom: 8 }}>No monthly budget has been set yet.</div>
             <div style={{ fontSize: 13, color: "var(--tx2)", marginBottom: 24 }}>Set a budget to monitor your monthly spending and remaining balance.</div>
             {isAdmin ? (
@@ -3200,12 +3927,16 @@ function SmartBudget({ group, expenses }) {
         ) : (
           <>
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
-              <div style={{ color: 'var(--tx3)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>Remaining</div>
-              <div className="fd" style={{ fontSize: 36, fontWeight: 800, color: 'var(--lime)' }}>₹{remaining.toLocaleString()}</div>
+              <div style={{ color: 'var(--tx3)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>
+                {exceeded ? 'Budget Exceeded' : 'Remaining'}
+              </div>
+              <div className="fd" style={{ fontSize: 36, fontWeight: 800, color: exceeded ? '#ff4d4d' : 'var(--lime)' }}>
+                {exceeded ? `-₹${Math.abs(remaining).toLocaleString()}` : `₹${remaining.toLocaleString()}`}
+              </div>
             </div>
 
             <div className="prog-track" style={{ height: 10, background: 'rgba(255,255,255,0.05)', marginBottom: 25 }}>
-              <div className="prog-fill" style={{ width: `${pct}%`, background: color }} />
+              <div className="prog-fill" style={{ width: `${pct}%`, background: color, transition: 'width 0.6s ease' }} />
             </div>
 
             <div className="budget-metric-grid">
@@ -3215,15 +3946,17 @@ function SmartBudget({ group, expenses }) {
               </div>
               <div className="budget-metric-card">
                 <div className="util-stat-label">Spent So Far</div>
-                <div style={{ fontSize: 15, fontWeight: 700 }}>₹{spent.toLocaleString()}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: exceeded ? '#ff4d4d' : 'var(--tx)' }}>₹{spent.toLocaleString()}</div>
               </div>
               <div className="budget-metric-card">
                 <div className="util-stat-label">Daily Left</div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--cyan)' }}>₹{dailyAllowance}/day</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: exceeded ? '#ff4d4d' : 'var(--cyan)' }}>
+                  {exceeded ? '₹0/day' : `₹${dailyAllowance.toLocaleString()}/day`}
+                </div>
               </div>
               <div className="budget-metric-card">
                 <div className="util-stat-label">Projected (EST)</div>
-                <div style={{ fontSize: 15, fontWeight: 700 }}>₹{projected.toLocaleString()}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: projected > budget ? '#ff4d4d' : 'var(--tx)' }}>₹{projected.toLocaleString()}</div>
               </div>
             </div>
           </>
@@ -3232,8 +3965,8 @@ function SmartBudget({ group, expenses }) {
       {!showEdit && budget > 0 && (
         <div className="util-card-footer">
           {projected > budget ?
-            <div style={{ color: "#ff4d4d", fontSize: 12, fontWeight: 700 }}>⚠ You are on track to exceed budget by ₹{Math.round(projected - budget).toLocaleString()}</div> :
-            <div style={{ color: "var(--lime)", fontSize: 12, fontWeight: 700 }}>✅ You are within budget limits. Great job!</div>
+            <div style={{ color: "#ff4d4d", fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}><Bell size={14} /> You are on track to exceed budget by ₹{Math.round(projected - budget).toLocaleString()}</div> :
+            <div style={{ color: "var(--lime)", fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}><CheckCircle2 size={14} /> You are within budget limits. Great job!</div>
           }
         </div>
       )}
@@ -3260,20 +3993,20 @@ function ActivityFeed({ gid }) {
 
   const getIcon = (type) => {
     switch (type) {
-      case 'expense': return '💰';
-      case 'settle': return '🤝';
-      case 'grocery': return '🛒';
-      case 'chore': return '🧹';
-      case 'reminder': return '🔔';
-      case 'note': return '📝';
-      default: return '📝';
+      case 'expense': return <Wallet size={16} />;
+      case 'settle': return <CheckCircle2 size={16} />;
+      case 'grocery': return <ShoppingCart size={16} />;
+      case 'chore': return <Sparkles size={16} />;
+      case 'reminder': return <Bell size={16} />;
+      case 'note': return <FileText size={16} />;
+      default: return <FileText size={16} />;
     }
   };
 
   return (
     <div className="card util-card-v2">
       <div className="util-card-header">
-        <div className="util-card-title">🕒 Room Activity</div>
+        <div className="util-card-title"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: 'var(--tx2)' }}><Activity size={20} /></span> Room Activity</div>
       </div>
       <div className="util-card-content">
         {activities.length === 0 && <div className="empty-state">No activity yet.</div>}
@@ -3306,8 +4039,12 @@ function Reminders({ gid }) {
 
   const handleAdd = async () => {
     if (!title || !date) return;
-    await addReminder({ group_id: gid, title, due_date: date, priority: pri });
-    setTitle(""); setDate("");
+    try {
+      await addReminder({ group_id: gid, title, due_date: date, priority: pri });
+      setTitle(""); setDate("");
+    } catch (err) {
+      toast.error(err?.message || 'Failed to save reminder. Please try again.');
+    }
   };
 
   const filtered = reminders.filter(r => r.title.toLowerCase().includes(search.toLowerCase()))
@@ -3316,7 +4053,7 @@ function Reminders({ gid }) {
   return (
     <div className="card util-card-v2">
       <div className="util-card-header">
-        <div className="util-card-title">🔔 Smart Reminders</div>
+        <div className="util-card-title"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: 'var(--tx2)' }}><Bell size={20} /></span> Smart Reminders</div>
         <span className="tag tag-violet">{reminders.filter(r => !r.is_completed).length} Pending</span>
       </div>
       <div style={{ marginBottom: 12 }}>
@@ -3326,13 +4063,13 @@ function Reminders({ gid }) {
         {filtered.length === 0 && <div className="empty-state">All caught up!</div>}
         {filtered.map(r => (
           <div key={r._id} className={`rem-item ${r.is_completed ? 'completed' : ''}`}>
-            <div className="rem-check" onClick={() => toggleReminder(r._id)}>{r.is_completed ? '✓' : ''}</div>
+            <div className="rem-check" onClick={() => toggleReminder(r._id)}>{r.is_completed ? <Check size={14} /> : ''}</div>
             <div className="rem-content">
               {editingId === r._id ? (
                 <div style={{ display: 'flex', gap: 5 }}>
                   <input className="form-input sm" value={editVal} onChange={e => setEditVal(e.target.value)} autoFocus />
-                  <button className="btn btn-primary btn-sm" onClick={async () => { await updateReminder(r._id, { title: editVal }); setEditingId(null); }}>✓</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setEditingId(null)}>✕</button>
+                  <button className="btn btn-primary btn-sm" onClick={async () => { await updateReminder(r._id, { title: editVal }); setEditingId(null); }}><Check size={14} /></button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditingId(null)}><X size={14} /></button>
                 </div>
               ) : (
                 <>
@@ -3343,7 +4080,7 @@ function Reminders({ gid }) {
                 </>
               )}
             </div>
-            <button className="btn-del" onClick={() => deleteReminder(r._id)}>✕</button>
+            <button className="btn-del" onClick={() => deleteReminder(r._id)}><X size={14} /></button>
           </div>
         ))}
       </div>
@@ -3382,7 +4119,7 @@ function GroceryList({ gid }) {
   return (
     <div className="card util-card-v2">
       <div className="util-card-header">
-        <div className="util-card-title">🛒 Grocery List</div>
+        <div className="util-card-title"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: 'var(--tx2)' }}><ShoppingCart size={20} /></span> Grocery List</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <span className="tag tag-green">{boughtCount} Bought</span>
           <span className="tag tag-cyan">₹{totalEst.toLocaleString()} Est</span>
@@ -3396,12 +4133,12 @@ function GroceryList({ gid }) {
         {filtered.length === 0 && <div className="empty-state">Fridge is empty.</div>}
         {filtered.map(g => (
           <div key={g._id} className={`rem-item ${g.is_checked ? 'completed' : ''}`}>
-            <div className="rem-check" onClick={() => toggleGrocery(g._id)}>{g.is_checked ? '✓' : ''}</div>
+            <div className="rem-check" onClick={() => toggleGrocery(g._id)}>{g.is_checked ? <Check size={14} /> : ''}</div>
             <div style={{ flex: 1 }}>
               <div className="rem-title">{g.name} <span style={{ fontSize: 10, color: 'var(--tx3)' }}>{g.quantity && `(${g.quantity})`}</span></div>
               <div className="rem-meta">{g.category} · ₹{g.estimated_price} est</div>
             </div>
-            <button className="btn-del" onClick={() => deleteGrocery(g._id)}>✕</button>
+            <button className="btn-del" onClick={() => deleteGrocery(g._id)}><X size={14} /></button>
           </div>
         ))}
       </div>
@@ -3438,14 +4175,14 @@ function ChoreManager({ gid, members }) {
   return (
     <div className="card util-card-v2">
       <div className="util-card-header">
-        <div className="util-card-title">🧹 Advanced Chores</div>
-        <button className="btn btn-ghost btn-sm" onClick={() => rotateChores(gid)}>Rotate ⟳</button>
+        <div className="util-card-title"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: 'var(--tx2)' }}><Sparkles size={20} /></span> Advanced Chores</div>
+        <button className="btn btn-ghost btn-sm" onClick={() => rotateChores(gid)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>Rotate <RefreshCw size={14} /></button>
       </div>
       <div className="util-card-content">
         {chores.length === 0 && <div className="empty-state">No chores assigned.</div>}
         {chores.map(c => (
           <div key={c._id} className="activity-item">
-            <div className="activity-icon">🧹</div>
+            <div className="activity-icon"><Sparkles size={16} /></div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 15, fontWeight: 700 }}>{c.name}</div>
               <div style={{ fontSize: 12, color: 'var(--tx3)' }}>
@@ -3463,7 +4200,7 @@ function ChoreManager({ gid, members }) {
               <option value="in-progress">Active</option>
               <option value="done">Done</option>
             </select>
-            <button className="btn-del" onClick={() => deleteChore(c._id)} style={{ marginLeft: 8 }}>✕</button>
+            <button className="btn-del" onClick={() => deleteChore(c._id)} style={{ marginLeft: 8 }}><X size={14} /></button>
           </div>
         ))}
       </div>
@@ -3517,14 +4254,14 @@ function PaymentTracker({ gid }) {
   return (
     <div className="card util-card-v2">
       <div className="util-card-header">
-        <div className="util-card-title">💸 Payment Dues</div>
+        <div className="util-card-title"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: 'var(--tx2)' }}><Wallet size={20} /></span> Payment Dues</div>
         <span className="tag tag-amber">{payments.filter(p => p.status !== 'paid').length} Bills</span>
       </div>
       <div className="util-card-content">
         {payments.length === 0 && <div className="empty-state">No bills tracked.</div>}
         {payments.map(p => (
           <div key={p._id} className="activity-item" style={{ alignItems: 'center' }}>
-            <div className="activity-icon">📅</div>
+            <div className="activity-icon"><Calendar size={16} /></div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 15, fontWeight: 700 }}>{p.title}</div>
               <div style={{ fontSize: 12, color: 'var(--tx3)' }}>Due: {new Date(p.due_date).toLocaleDateString()}</div>
@@ -3536,8 +4273,8 @@ function PaymentTracker({ gid }) {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
-              {p.status !== 'paid' && <button className="btn btn-ghost btn-sm" onClick={() => updatePayment(p._id, { status: 'paid' })}>✓</button>}
-              <button className="btn-del" onClick={() => deletePayment(p._id)}>✕</button>
+              {p.status !== 'paid' && <button className="btn btn-ghost btn-sm" onClick={() => updatePayment(p._id, { status: 'paid' })}><Check size={14} /></button>}
+              <button className="btn-del" onClick={() => deletePayment(p._id)}><X size={14} /></button>
             </div>
           </div>
         ))}
@@ -3572,26 +4309,26 @@ function SharedLinks({ gid }) {
 
   const getFavicon = (u) => {
     try { return `https://www.google.com/s2/favicons?domain=${new URL(u).hostname}&sz=32`; }
-    catch (e) { return '🔗'; }
+    catch (e) { return <LinkIcon size={16} />; }
   };
 
   return (
     <div className="card util-card-v2">
       <div className="util-card-header">
-        <div className="util-card-title">🔗 Shared Links</div>
+        <div className="util-card-title"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: 'var(--tx2)' }}><LinkIcon size={20} /></span> Shared Links</div>
       </div>
       <div className="util-card-content">
         {links.length === 0 && <div className="empty-state">No links shared.</div>}
         {links.map(l => (
           <div key={l._id} className="activity-item" style={{ alignItems: 'center' }}>
             <div className="activity-icon">
-              {l.url.startsWith('http') ? <img src={getFavicon(l.url)} alt="" style={{ width: 24, height: 24, borderRadius: 6 }} /> : '🔗'}
+              {l.url.startsWith('http') ? <img src={getFavicon(l.url)} alt="" style={{ width: 24, height: 24, borderRadius: 6 }} /> : <LinkIcon size={24} />}
             </div>
             <div style={{ flex: 1 }}>
               <div className="activity-desc" style={{ fontWeight: 600, color: 'var(--tx)', cursor: 'pointer' }} onClick={() => window.open(l.url, '_blank')}>{l.title}</div>
-              <div className="activity-time" style={{ cursor: 'pointer' }} onClick={() => { navigator.clipboard.writeText(l.url); toast.success("Copied!"); }}>Copy URL 📋</div>
+              <div className="activity-time" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }} onClick={() => { navigator.clipboard.writeText(l.url); toast.success("Copied!"); }}>Copy URL <FileText size={12} /></div>
             </div>
-            <button className="btn-del" onClick={() => deleteLink(l._id)}>✕</button>
+            <button className="btn-del" onClick={() => deleteLink(l._id)}><X size={14} /></button>
           </div>
         ))}
       </div>
@@ -3628,7 +4365,7 @@ function RoomNotes({ gid }) {
   return (
     <div className="card util-card-v2">
       <div className="util-card-header">
-        <div className="util-card-title">📌 Shared Notes</div>
+        <div className="util-card-title"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: 'var(--tx2)' }}><FileText size={20} /></span> Shared Notes</div>
         <input className="form-input sm" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: 120 }} />
       </div>
       <div className="util-card-content">
@@ -3641,7 +4378,7 @@ function RoomNotes({ gid }) {
                 <textarea className="form-input sm" value={editBody} onChange={e => setEditBody(e.target.value)} />
                 <div style={{ display: 'flex', gap: 5 }}>
                   <button className="btn btn-primary btn-sm" onClick={async () => { await updateNote(n._id, { title: editTitle, body: editBody }); setEditingId(null); }}>Save</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setEditingId(null)}>✕</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditingId(null)}><X size={14} /></button>
                 </div>
               </div>
             ) : (
@@ -3649,8 +4386,8 @@ function RoomNotes({ gid }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                   <div style={{ fontWeight: 700, fontSize: 14 }}>{n.title}</div>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={() => { setEditingId(n._id); setEditTitle(n.title); setEditBody(n.body); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12 }}>✏️</button>
-                    <button onClick={() => deleteNote(n._id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff4d4d' }}>✕</button>
+                    <button onClick={() => { setEditingId(n._id); setEditTitle(n.title); setEditBody(n.body); }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--tx3)' }}><FileText size={14} /></button>
+                    <button onClick={() => deleteNote(n._id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff4d4d', display: 'flex', alignItems: 'center' }}><X size={14} /></button>
                   </div>
                 </div>
                 <div style={{ fontSize: 12.5, color: 'var(--tx2)', marginBottom: 8 }}>{n.body}</div>
@@ -3670,9 +4407,9 @@ function RoomNotes({ gid }) {
 }
 
 
-function Utilities() {
+function Utilities({ nav }) {
   const { groups, activeGroup, setActiveGroup } = useGroupStore();
-  const { expenses, fetchExpenses } = useExpenseStore();
+  const { expenses, allExpenses, fetchExpenses } = useExpenseStore();
 
   useEffect(() => {
     if (!activeGroup && groups.length > 0) setActiveGroup(groups[0]);
@@ -3681,6 +4418,26 @@ function Utilities() {
   useEffect(() => {
     if (activeGroup?._id) fetchExpenses(activeGroup._id);
   }, [activeGroup?._id, fetchExpenses]);
+
+  // Compute group spend from allExpenses (reliable source)
+  const sourceExpenses = (allExpenses && allExpenses.length > 0) ? allExpenses : expenses;
+  const groupSpend = useMemo(() => {
+    return sourceExpenses
+      .filter(e => {
+        const gid = e.group?._id || e.group;
+        return gid === activeGroup?._id && !e.is_settlement && e.type !== 'settlement';
+      })
+      .reduce((s, e) => s + (e.amount || 0), 0);
+  }, [sourceExpenses, activeGroup?._id]);
+
+  const budgetHealth = useMemo(() => {
+    const budget = activeGroup?.monthly_budget || 0;
+    if (budget === 0) return { label: '—', color: 'var(--tx3)' };
+    const pct = (groupSpend / budget) * 100;
+    if (pct > 90) return { label: 'Critical', color: '#ff4d4d' };
+    if (pct > 70) return { label: 'Warning', color: 'var(--amber)' };
+    return { label: 'Good', color: 'var(--cyan)' };
+  }, [groupSpend, activeGroup?.monthly_budget]);
 
   const handleScrollTo = (id) => {
     const el = document.getElementById(id);
@@ -3698,7 +4455,7 @@ function Utilities() {
   if (groups.length === 0) {
     return (
       <div className="card" style={{ textAlign: "center", padding: "80px 20px" }}>
-        <div style={{ fontSize: 64, marginBottom: 20 }}>🏠</div>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20, color: 'var(--tx3)' }}><Users size={64} /></div>
         <h2 className="fd" style={{ fontSize: 28, marginBottom: 10 }}>No Groups Found</h2>
         <p style={{ color: "var(--tx3)", fontSize: 15 }}>Create or join a group to start using room utilities.</p>
       </div>
@@ -3711,24 +4468,12 @@ function Utilities() {
         <div style={{ flex: 1 }}>
           <h1 className="fd" style={{ fontSize: 32, fontWeight: 800, marginBottom: 12 }}>Room Utilities</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-            <div style={{ position: 'relative', width: '320px', maxWidth: '100%' }}>
-              <select
-                className="form-select"
-                value={activeGroup?._id || ""}
-                onChange={e => setActiveGroup(groups.find(g => g._id === e.target.value))}
-                style={{
-                  height: 48,
-                  fontSize: 16,
-                  paddingLeft: 16,
-                  paddingRight: 40,
-                  fontWeight: 600,
-                  background: 'var(--bg-card)',
-                  borderRadius: 16
-                }}
-              >
-                {groups.map(g => <option key={g._id} value={g._id}>{g.emoji} {g.name}</option>)}
-              </select>
-              <div style={{ position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--tx3)' }}>▼</div>
+            <div style={{ width: '100%', overflow: 'hidden' }}>
+              <GroupChipNav 
+                selectedGroupId={activeGroup?._id}
+                onSelect={(g) => setActiveGroup(g)}
+                nav={nav}
+              />
             </div>
             {activeGroup && <div className="tag tag-lime" style={{ padding: '8px 16px', fontSize: 14, borderRadius: 12 }}>{activeGroup.members?.length || 0} Members</div>}
           </div>
@@ -3736,32 +4481,36 @@ function Utilities() {
         <div className="util-stat-row">
           <div className="util-stat-pill">
             <span className="util-stat-label">Group Spend</span>
-            <span className="util-stat-val">₹{(expenses.filter(e => (e.group?._id || e.group) === activeGroup?._id).reduce((s, e) => s + e.amount, 0)).toLocaleString()}</span>
+            <span className="util-stat-val">₹{groupSpend.toLocaleString()}</span>
           </div>
           <div className="util-stat-pill">
             <span className="util-stat-label">Budget Health</span>
-            <span className="util-stat-val" style={{ color: 'var(--cyan)' }}>Good</span>
+            <span className="util-stat-val" style={{ color: budgetHealth.color }}>{budgetHealth.label}</span>
           </div>
         </div>
       </div>
 
       {activeGroup ? (
-        <div className="utilities-grid">
-          {/* ROW 1 */}
-          <div id="budget-card" className="util-card-v2"><SmartBudget group={activeGroup} expenses={expenses} /></div>
-          <div id="activity-card" className="util-card-v2"><ActivityFeed gid={activeGroup._id} /></div>
-          <div id="reminder-card" className="util-card-v2"><Reminders gid={activeGroup._id} /></div>
+        <>
+          <div style={{ marginBottom: 20 }}>
+            <QuickActionHub onNavigate={handleScrollTo} />
+          </div>
+          <div className="utilities-grid">
+            {/* ROW 1 */}
+            <div id="budget-card" className="util-card-v2"><SmartBudget group={activeGroup} groupSpend={groupSpend} /></div>
+            <div id="activity-card" className="util-card-v2"><ActivityFeed gid={activeGroup._id} /></div>
+            <div id="reminder-card" className="util-card-v2"><Reminders gid={activeGroup._id} /></div>
 
-          {/* ROW 2 */}
-          <div id="payment-card" className="util-card-v2"><PaymentTracker gid={activeGroup._id} /></div>
-          <div id="grocery-card" className="util-card-v2"><GroceryList gid={activeGroup._id} /></div>
-          <div id="chore-card" className="util-card-v2"><ChoreManager gid={activeGroup._id} members={activeGroup.members} /></div>
+            {/* ROW 2 */}
+            <div id="payment-card" className="util-card-v2"><PaymentTracker gid={activeGroup._id} /></div>
+            <div id="grocery-card" className="util-card-v2"><GroceryList gid={activeGroup._id} /></div>
+            <div id="chore-card" className="util-card-v2"><ChoreManager gid={activeGroup._id} members={activeGroup.members} /></div>
 
-          {/* ROW 3 */}
-          <div id="link-card" className="util-card-v2"><SharedLinks gid={activeGroup._id} /></div>
-          <div id="note-card" className="util-card-v2"><RoomNotes gid={activeGroup._id} /></div>
-          <div className="util-card-v2 card"><QuickActionHub onNavigate={handleScrollTo} /></div>
-        </div>
+            {/* ROW 3 */}
+            <div id="link-card" className="util-card-v2"><SharedLinks gid={activeGroup._id} /></div>
+            <div id="note-card" className="util-card-v2"><RoomNotes gid={activeGroup._id} /></div>
+          </div>
+        </>
       ) : (
         <div className="empty-state" style={{ height: 400 }}>Initializing hub...</div>
       )}
@@ -3772,32 +4521,27 @@ function Utilities() {
 
 function QuickActionHub({ onNavigate }) {
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div className="util-card-header">
-        <div className="util-card-title">⚡ Quick Actions</div>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, flex: 1 }}>
-        {[
-          { id: 'budget', icon: '📈', label: 'Budget' },
-          { id: 'activity', icon: '🕒', label: 'Activity' },
-          { id: 'reminder', icon: '🔔', label: 'Reminders' },
-          { id: 'payment', icon: '💳', label: 'Payments' },
-          { id: 'grocery', icon: '🛒', label: 'Groceries' },
-          { id: 'chore', icon: '🧹', label: 'Chores' },
-          { id: 'link', icon: '🔗', label: 'Links' },
-          { id: 'note', icon: '📌', label: 'Notes' }
-        ].map(a => (
-          <button
-            key={a.id}
-            className="btn btn-ghost"
-            style={{ flexDirection: 'column', height: 'auto', padding: '15px 5px', gap: 5 }}
-            onClick={() => onNavigate(`${a.id}-card`)}
-          >
-            <span style={{ fontSize: 24 }}>{a.icon}</span>
-            <span style={{ fontSize: 11, fontWeight: 700 }}>{a.label}</span>
-          </button>
-        ))}
-      </div>
+    <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8 }} className="hide-scroll">
+      {[
+        { id: 'budget', icon: <Activity size={20} />, label: 'Budget' },
+        { id: 'activity', icon: <FileText size={20} />, label: 'Activity' },
+        { id: 'reminder', icon: <Bell size={20} />, label: 'Reminders' },
+        { id: 'payment', icon: <Wallet size={20} />, label: 'Payments' },
+        { id: 'grocery', icon: <ShoppingCart size={20} />, label: 'Groceries' },
+        { id: 'chore', icon: <Sparkles size={20} />, label: 'Chores' },
+        { id: 'link', icon: <LinkIcon size={20} />, label: 'Links' },
+        { id: 'note', icon: <FileText size={20} />, label: 'Notes' }
+      ].map(a => (
+        <button
+          key={a.id}
+          className="btn btn-ghost"
+          style={{ flexDirection: 'row', padding: '10px 16px', gap: 8, flexShrink: 0, borderRadius: 20, background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+          onClick={() => onNavigate(`${a.id}-card`)}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', color: 'var(--tx2)' }}>{a.icon}</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tx)' }}>{a.label}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -3805,7 +4549,7 @@ function QuickActionHub({ onNavigate }) {
 function AIAssistant() {
   return (
     <div className="card" style={{ textAlign: "center", padding: "40px 20px" }}>
-      <div style={{ fontSize: 48, marginBottom: 16 }}>🤖</div>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, color: 'var(--tx3)' }}><Activity size={48} /></div>
       <div className="section-title">AI Assistant is currently disabled.</div>
       <div style={{ color: "var(--tx3)", marginTop: 8 }}>We've removed external AI APIs to keep the app strictly MongoDB-based.</div>
     </div>
@@ -3837,6 +4581,7 @@ function Settings({ nav }) {
     try {
       await updateProfile({ full_name: userName, upi_id: upiId });
       setEditProfile(false);
+      toast.success('Profile updated!');
     } catch (err) { toast.error(err.message); }
   };
 
@@ -3844,13 +4589,95 @@ function Settings({ nav }) {
     try {
       await updateProfile({ upi_id: upiId });
       setEditUpi(false);
+      toast.success('UPI ID saved!');
     } catch (err) { toast.error(err.message); }
   };
 
   const togglePref = async (key, val) => {
     try {
       await updateProfile({ [key]: val });
+      if (key === 'lang') toast.success('Language preference saved');
+      if (key === 'currency') toast.success('Currency preference saved');
     } catch (err) { toast.error(err.message); }
+  };
+
+  const handleDarkModeToggle = (newVal) => {
+    setDarkMode(newVal);
+    togglePref('dark_mode', newVal);
+    if (newVal) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    } else {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    }
+  };
+
+  useEffect(() => {
+    if (user?.settings?.dark_mode === false) {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    }
+  }, []);
+
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [pwData, setPwData] = useState({ current: '', new: '', confirm: '' });
+  
+  const handleChangePassword = async () => {
+    if (pwData.new !== pwData.confirm) return toast.error("New passwords don't match");
+    if (pwData.new.length < 6) return toast.error("Password must be at least 6 characters");
+    try {
+      await api.auth.changePassword({ current_password: pwData.current, new_password: pwData.new }, useAuthStore.getState().token);
+      toast.success("Password changed successfully");
+      setShowChangePassword(false);
+      setPwData({ current: '', new: '', confirm: '' });
+    } catch (err) { toast.error(err.message || "Failed to change password"); }
+  };
+
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== 'DELETE') return;
+    try {
+      await api.auth.deleteAccount(useAuthStore.getState().token);
+      useAuthStore.getState().logout();
+      nav("landing");
+    } catch (err) { toast.error(err.message || "Failed to delete account"); }
+  };
+
+  const [showSignOut, setShowSignOut] = useState(false);
+  
+  const handleSignOut = () => {
+    useAuthStore.getState().logout();
+    nav("landing");
+  };
+
+  const exportAllData = () => {
+    const data = allExpenses.map(e => ({
+      Date: new Date(e.created_at).toLocaleDateString(),
+      Description: e.title || e.description || 'Expense',
+      Amount: e.amount,
+      Category: e.category,
+      PaidBy: e.paid_by_name || e.paid_by?.full_name || 'Unknown'
+    }));
+
+    if (data.length === 0) return toast.error("No data to export");
+
+    const headers = Object.keys(data[0]).join(',');
+    const rows = data.map(obj => Object.values(obj).map(v => `"${v}"`).join(',')).join('\n');
+    const csv = `${headers}\n${rows}`;
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `splitbuddy_alldata_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    toast.success("All data exported to CSV");
   };
 
   return (
@@ -3882,26 +4709,26 @@ function Settings({ nav }) {
       <div className="card" style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--tx3)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: 11 }}>Preferences</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
-          <span style={{ fontSize: 17, width: 26 }}>🌙</span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Dark Mode</span>
-          <div onClick={() => { setDarkMode(!darkMode); togglePref('dark_mode', !darkMode); }} style={{ width: 38, height: 21, borderRadius: 99, background: darkMode ? "var(--lime)" : "var(--bg-glass)", border: darkMode ? "none" : "1px solid var(--border)", position: "relative", cursor: "pointer", transition: "all .2s" }}>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><SettingsIcon size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Dark Mode</span>
+          <div onClick={() => handleDarkModeToggle(!darkMode)} style={{ width: 38, height: 21, borderRadius: 99, background: darkMode ? "var(--lime)" : "var(--bg-glass)", border: darkMode ? "none" : "1px solid var(--border)", position: "relative", cursor: "pointer", transition: "all .2s" }}>
             <div style={{ width: 17, height: 17, borderRadius: 50, background: darkMode ? "#000" : "var(--tx3)", position: "absolute", top: 2, right: darkMode ? 2 : "auto", left: darkMode ? "auto" : 2, transition: "all .2s" }} />
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
-          <span style={{ fontSize: 17, width: 26 }}>🔔</span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Notifications</span>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><Bell size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Notifications</span>
           <div onClick={() => { setNotifOn(!notifOn); togglePref('notify_push', !notifOn); }} style={{ width: 38, height: 21, borderRadius: 99, background: notifOn ? "var(--lime)" : "var(--bg-glass)", border: notifOn ? "none" : "1px solid var(--border)", position: "relative", cursor: "pointer", transition: "all .2s" }}>
             <div style={{ width: 17, height: 17, borderRadius: 50, background: notifOn ? "#000" : "var(--tx3)", position: "absolute", top: 2, right: notifOn ? 2 : "auto", left: notifOn ? "auto" : 2, transition: "all .2s" }} />
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)" }}>
-          <span style={{ fontSize: 17, width: 26 }}>🌐</span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Language</span>
-          <select className="form-select" value={lang} onChange={e => setLang(e.target.value)} style={{ width: 130, padding: "5px 8px", fontSize: 12 }}>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><FileText size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Language</span>
+          <select className="form-select" value={lang} onChange={e => { setLang(e.target.value); togglePref('lang', e.target.value); }} style={{ width: 130, padding: "5px 8px", fontSize: 12 }}>
             <option>English</option><option>Hindi</option><option>English / Hindi</option>
           </select>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0" }}>
-          <span style={{ fontSize: 17, width: 26 }}>💱</span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Currency</span>
-          <select className="form-select" value={currency} onChange={e => setCurrency(e.target.value)} style={{ width: 130, padding: "5px 8px", fontSize: 12 }}>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><Wallet size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Currency</span>
+          <select className="form-select" value={currency} onChange={e => { setCurrency(e.target.value); togglePref('currency', e.target.value); }} style={{ width: 130, padding: "5px 8px", fontSize: 12 }}>
             <option>₹ INR</option><option>$ USD</option><option>€ EUR</option><option>£ GBP</option>
           </select>
         </div>
@@ -3910,7 +4737,7 @@ function Settings({ nav }) {
       <div className="card" style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--tx3)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: 11 }}>Payment</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)" }}>
-          <span style={{ fontSize: 17, width: 26 }}>💳</span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>UPI ID</span>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><Wallet size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>UPI ID</span>
           {editUpi ? (
             <div style={{ display: "flex", gap: 6 }}>
               <input className="form-input" value={upiId} onChange={e => setUpiId(e.target.value)} placeholder="name@upi" style={{ width: 140, padding: "5px 8px", fontSize: 12 }} />
@@ -3921,41 +4748,109 @@ function Settings({ nav }) {
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0" }}>
-          <span style={{ fontSize: 17, width: 26 }}>🏦</span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Bank Account</span>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><Home size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Bank Account</span>
           <span style={{ fontSize: 12.5, color: "var(--tx3)" }}>Coming soon ›</span>
         </div>
       </div>
 
       <div className="card" style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--tx3)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: 11 }}>Account</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
-          <span style={{ fontSize: 17, width: 26 }}>🔒</span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Change Password</span>
-          <span style={{ fontSize: 12.5, color: "var(--tx3)" }}>›</span>
+        <div onClick={() => setShowChangePassword(true)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><SettingsIcon size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Change Password</span>
+          <span style={{ fontSize: 12.5, color: "var(--tx3)" }}><ChevronRight size={16} /></span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
-          <span style={{ fontSize: 17, width: 26 }}>📤</span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Export All Data</span>
-          <span style={{ fontSize: 12.5, color: "var(--tx3)" }}>›</span>
+        <div onClick={exportAllData} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><FileText size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Export All Data</span>
+          <span style={{ fontSize: 12.5, color: "var(--tx3)" }}><ChevronRight size={16} /></span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", cursor: "pointer" }}>
-          <span style={{ fontSize: 17, width: 26 }}>🗑️</span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500, color: "#ff6060" }}>Delete Account</span>
-          <span style={{ fontSize: 12.5, color: "var(--tx3)" }}>›</span>
+        <div onClick={() => setShowDeleteAccount(true)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", cursor: "pointer" }}>
+          <span style={{ width: 26, color: '#ff6060', display: 'flex' }}><Trash2 size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500, color: "#ff6060" }}>Delete Account</span>
+          <span style={{ fontSize: 12.5, color: "var(--tx3)" }}><ChevronRight size={16} /></span>
         </div>
       </div>
-      <button className="btn btn-danger" style={{ width: "100%" }} onClick={() => nav("landing")}>Sign Out</button>
+      <button className="btn btn-danger" style={{ width: "100%" }} onClick={() => setShowSignOut(true)}>Sign Out</button>
+
+      {/* MODALS */}
+      {showChangePassword && (
+        <div className="modal-overlay" onClick={() => setShowChangePassword(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">Change Password</div>
+              <div className="modal-close" onClick={() => setShowChangePassword(false)}>✕</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Current Password</label>
+              <input className="form-input" type="password" value={pwData.current} onChange={e => setPwData({ ...pwData, current: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">New Password</label>
+              <input className="form-input" type="password" value={pwData.new} onChange={e => setPwData({ ...pwData, new: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Confirm New Password</label>
+              <input className="form-input" type="password" value={pwData.confirm} onChange={e => setPwData({ ...pwData, confirm: e.target.value })} />
+            </div>
+            <div className="add-footer" style={{ marginTop: 24 }}>
+              <button className="btn btn-ghost" onClick={() => setShowChangePassword(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleChangePassword}>Update Password</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteAccount && (
+        <div className="modal-overlay" onClick={() => setShowDeleteAccount(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title" style={{ color: '#ff6060' }}>Delete Account</div>
+              <div className="modal-close" onClick={() => setShowDeleteAccount(false)}>✕</div>
+            </div>
+            <div style={{ color: 'var(--tx2)', fontSize: 14, marginBottom: 20 }}>
+              This action cannot be undone. All your personal data and balances will be permanently removed. 
+              To confirm, please type <strong>DELETE</strong> below.
+            </div>
+            <div className="form-group">
+              <input className="form-input" placeholder="Type DELETE to confirm" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} />
+            </div>
+            <div className="add-footer" style={{ marginTop: 24 }}>
+              <button className="btn btn-ghost" onClick={() => setShowDeleteAccount(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleDeleteAccount} disabled={deleteConfirmText !== 'DELETE'}>Delete Forever</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSignOut && (
+        <div className="modal-overlay" onClick={() => setShowSignOut(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">Sign Out</div>
+              <div className="modal-close" onClick={() => setShowSignOut(false)}>✕</div>
+            </div>
+            <div style={{ color: 'var(--tx2)', fontSize: 14, marginBottom: 20 }}>
+              Are you sure you want to sign out of SplitBuddy?
+            </div>
+            <div className="add-footer">
+              <button className="btn btn-ghost" onClick={() => setShowSignOut(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleSignOut}>Sign Out</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 // ── NAV CONFIG ──────────────────────────────────────────────────
 const NAV_ITEMS = [
-  { id: "dashboard", lbl: "Dashboard", icon: "📊" },
-  { id: "groups", lbl: "Groups", icon: "👥" },
-  { id: "expenses", lbl: "Expenses", icon: "💸" },
-  { id: "settle", lbl: "Settle Up", icon: "✅" },
-  { id: "reports", lbl: "Reports", icon: "📈" },
-  { id: "utilities", lbl: "Utilities", icon: "🏠" },
-  { id: "settings", lbl: "Settings", icon: "⚙️" },
+  { id: "dashboard", lbl: "Dashboard", icon: <Grid size={20} /> },
+  { id: "groups", lbl: "Groups", icon: <Users size={20} /> },
+  { id: "expenses", lbl: "Expenses", icon: <List size={20} /> },
+  { id: "settle", lbl: "Settle Up", icon: <CheckCircle2 size={20} /> },
+  { id: 'reports', lbl: 'Insights', icon: <PieChart size={20} /> },
+  { id: "utilities", lbl: "Utilities", icon: <Home size={20} /> },
+  { id: "settings", lbl: "Settings", icon: <SettingsIcon size={20} /> },
 ];
-const PAGE_TITLES = { dashboard: "Dashboard", groups: "My Groups", groupdetail: "Group Detail", expenses: "All Expenses", settle: "Settle Up", reports: "Reports & Analytics", utilities: "Room Utilities", ai: "AI Assistant", settings: "Settings" };
+const PAGE_TITLES = { dashboard: "Dashboard", groups: "My Groups", groupdetail: "Group Detail", expenses: "All Expenses", settle: "Settle Up", reports: "Insights", utilities: "Room Utilities", ai: "AI Assistant", settings: "Settings", more: "More", profile: "My Profile" };
 
 
 function NotificationPanel({ onClose }) {
@@ -3963,13 +4858,13 @@ function NotificationPanel({ onClose }) {
 
   const getIcon = (type) => {
     switch (type) {
-      case 'expense': return '💰';
-      case 'settle': return '🤝';
-      case 'grocery': return '🛒';
-      case 'chore': return '🧹';
-      case 'reminder': return '🔔';
-      case 'budget': return '📈';
-      default: return '📢';
+      case 'expense': return <Wallet size={16} />;
+      case 'settle': return <CheckCircle2 size={16} />;
+      case 'grocery': return <ShoppingCart size={16} />;
+      case 'chore': return <Sparkles size={16} />;
+      case 'reminder': return <Bell size={16} />;
+      case 'budget': return <Activity size={16} />;
+      default: return <Bell size={16} />;
     }
   };
 
@@ -3986,10 +4881,10 @@ function NotificationPanel({ onClose }) {
   return (
     <div className="notif-panel">
       <div className="notif-header">
-        <div className="notif-title">🔔 Notifications {unreadCount > 0 && <span style={{ color: 'var(--lime)', fontSize: 14 }}>({unreadCount})</span>}</div>
+        <div className="notif-title"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8 }}><Bell size={20} /></span> Notifications {unreadCount > 0 && <span style={{ color: 'var(--lime)', fontSize: 14 }}>({unreadCount})</span>}</div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button className="btn btn-ghost btn-sm" onClick={markAllAsRead} style={{ fontSize: 11 }}>Mark all read</button>
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={16} /></button>
         </div>
       </div>
       <div className="notif-list">
@@ -4012,7 +4907,7 @@ function NotificationPanel({ onClose }) {
                 className="btn btn-ghost btn-sm"
                 style={{ padding: 5, height: 24, width: 24, minWidth: 24 }}
                 onClick={(e) => { e.stopPropagation(); deleteNotification(n._id); }}
-              >✕</button>
+              ><X size={14} /></button>
             </div>
           ))
         )}
@@ -4104,10 +4999,12 @@ export default function SplitBuddy() {
       case "groupdetail": return <GroupDetail group={groupData} nav={nav} />;
       case "expenses": return <Expenses />;
       case "settle": return <Settle />;
-      case "reports": return <Reports />;
-      case "utilities": return <Utilities />;
+      case "reports": return <Reports nav={nav} openModal={() => setShowAdd(true)} />;
+      case "utilities": return <Utilities nav={nav} />;
       case "ai": return <AIAssistant />;
       case "settings": return <Settings nav={nav} />;
+      case "profile": return <ProfilePage nav={nav} />;
+      case "more": return <MoreMobile nav={nav} />;
       default: return <Dashboard nav={nav} />;
     }
   };
@@ -4115,12 +5012,21 @@ export default function SplitBuddy() {
   if (!isAuth || page === "landing" || page === "login") return <>
     <style dangerouslySetInnerHTML={{ __html: CSS }} />
     {renderPage()}
-    {showAdd && <AddExpenseModal onClose={() => setShowAdd(false)} />}
+    {showAdd && <AddExpenseFlow onClose={() => setShowAdd(false)} nav={nav} forceGroup={page === 'groupdetail' ? groupData : undefined} />}
   </>;
 
   return (
     <>
-      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: CSS + `
+        .mobile-back-btn { display: none; background: transparent; border: none; color: var(--tx); cursor: pointer; padding: 4px; border-radius: 8px; transition: background 0.2s; }
+        .mobile-back-btn:active { background: rgba(255,255,255,0.1); }
+        .mobile-page-title { display: none; font-size: 20px; font-weight: 700; color: var(--tx); }
+        @media(max-width:768px) {
+          .mobile-back-btn { display: flex; align-items: center; justify-content: center; }
+          .mobile-page-title { display: block; }
+          .topbar-title { display: flex; align-items: center; gap: 8px; }
+        }
+      ` }} />
       {showGlobalBalancesModal && <MyBalancesModal onClose={() => setShowGlobalBalancesModal(false)} balances={userBalances} />}
       <div className="app">
         <aside className="sidebar">
@@ -4155,15 +5061,25 @@ export default function SplitBuddy() {
             <div className="user-pill" onClick={() => nav("settings")}>
               <div className="avatar">{(user?.full_name || "User")[0]?.toUpperCase()}</div>
               <div><div className="user-name">{user?.full_name || "User"}</div><div className="user-role">{user?.role || "Admin"}</div></div>
-              <span style={{ color: "var(--tx3)", fontSize: 11, marginLeft: "auto" }}>⚙</span>
+              <span style={{ color: "var(--tx3)", fontSize: 11, marginLeft: "auto", display: 'flex' }}><SettingsIcon size={14} /></span>
             </div>
           </div>
         </aside>
         <main className="main">
           <div className="topbar">
             <div className="topbar-title">
+              {["more", "reports", "utilities", "settings", "profile"].includes(page) && page !== "more" && (
+                <button className="mobile-back-btn" onClick={() => nav("more")}>
+                  <ChevronLeft size={24} />
+                </button>
+              )}
               <span className="desktop-title">{PAGE_TITLES[page] || "SplitBuddy"}</span>
-              <div className="mobile-logo"><div className="logo-mark">S</div><span className="logo-text">Split<span>Buddy</span></span></div>
+              <div className="mobile-logo" style={{ display: ["more", "reports", "utilities", "settings", "profile"].includes(page) ? 'none' : '' }}>
+                <div className="logo-mark">S</div><span className="logo-text">Split<span>Buddy</span></span>
+              </div>
+              {["more", "reports", "utilities", "settings", "profile"].includes(page) && (
+                <div className="mobile-page-title">{PAGE_TITLES[page]}</div>
+              )}
             </div>
             <div className="topbar-actions">
               {["dashboard", "expenses", "groups", "groupdetail"].includes(page) && <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add Expense</button>}
@@ -4180,7 +5096,7 @@ export default function SplitBuddy() {
                     background: showNotifs ? 'rgba(77,255,136,0.1)' : 'transparent'
                   }}
                 >
-                  🔔
+                  <Bell size={20} />
                 </button>
                 {unreadCount > 0 && <span className="notif-badge" style={{ top: '2px', right: '2px' }}>{unreadCount > 9 ? '9+' : unreadCount}</span>}
               </div>
@@ -4195,17 +5111,13 @@ export default function SplitBuddy() {
               <span className="micon">{n.icon}</span>{n.lbl}
             </div>
           ))}
-          <div className={`mob-item${["reports", "utilities", "settings"].includes(page) ? " active" : ""}`} onClick={() => {
-            if (page === "reports") nav("utilities");
-            else if (page === "utilities") nav("settings");
-            else nav("reports");
-          }}>
-            <span className="micon">☰</span>More
+          <div className={`mob-item${["more", "reports", "utilities", "settings", "profile"].includes(page) ? " active" : ""}`} onClick={() => nav("more")}>
+            <span className="micon" style={{ display: 'flex' }}><MoreVertical size={20} /></span>More
           </div>
         </nav>
         <button className="fab" onClick={() => setShowAdd(true)}>+</button>
       </div>
-      {showAdd && <AddExpenseModal onClose={() => setShowAdd(false)} />}
+      {showAdd && <AddExpenseFlow onClose={() => setShowAdd(false)} nav={nav} forceGroup={page === 'groupdetail' ? groupData : undefined} />}
     </>
   );
 }

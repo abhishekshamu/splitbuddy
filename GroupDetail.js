@@ -1,0 +1,1 @@
+function GroupDetail({ group, nav }

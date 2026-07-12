@@ -4,7 +4,7 @@ const SettlementSchema = new mongoose.Schema({
   group: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Group',
-    required: true
+    required: false
   },
   from_user: {
     type: mongoose.Schema.Types.ObjectId,
@@ -38,7 +38,7 @@ const SettlementSchema = new mongoose.Schema({
   status: {
     type: String,
     default: 'pending',
-    enum: ['pending', 'confirmed', 'disputed', 'completed']
+    enum: ['pending', 'confirmed', 'disputed', 'completed', 'reversed']
   },
   note: String,
   settled_at: {

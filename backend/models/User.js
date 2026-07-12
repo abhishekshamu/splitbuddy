@@ -45,6 +45,10 @@ const UserSchema = new mongoose.Schema({
     notify_email: { type: Boolean, default: true },
     dark_mode: { type: Boolean, default: true }
   },
+  pinned_groups: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Group'
+  }],
   created_at: {
     type: Date,
     default: Date.now

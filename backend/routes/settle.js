@@ -435,9 +435,8 @@ router.get('/plan', authenticate, asyncHandler(async (req, res) => {
     is_deleted: false
   });
 
-  // 4. Fetch ALL completed settlements for target groups
   const allSettlements = await Settlement.find({
-    group: { $in: groupIds },
+    $or: [{ group: { $in: groupIds } }, { group: null }, { group: { $exists: false } }],
     status: { $in: ['completed', 'confirmed'] }
   });
 
@@ -569,32 +568,35 @@ router.post('/', authenticate, asyncHandler(async (req, res) => {
     throw new AppError('Payer and receiver cannot be the same person', 400);
   }
 
-  // If group_id provided, validate settlement doesn't exceed group total
-  if (group_id && group_id !== 'all') {
-    const groupExpenses = await Expense.aggregate([
-      { $match: { group: new mongoose.Types.ObjectId(group_id), is_deleted: false } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-    const groupTotal = groupExpenses[0]?.total || 0;
+  // Removed groupTotal validation because Single Source of Truth allows global debts 
+  // to exceed specific group totals if expenses are spread across multiple groups.
 
-    if (parsedAmount > groupTotal) {
-      throw new AppError(`Settlement amount ₹${parsedAmount} exceeds group total expenses ₹${groupTotal}`, 400);
-    }
-  }
+  const isValidObjectId = mongoose.Types.ObjectId.isValid;
 
-  const settlement = await Settlement.create({
-    group: group_id,
-    from_user: from_id,
+  const settlementData = {
     from_name,
-    to_user: to_id,
     to_name,
     amount: parsedAmount,
     method,
     status: 'completed',
     settled_at: new Date()
-  });
+  };
 
-  await logActivity(group_id, req.user.id, 'settlement', 'paid', `₹${parsedAmount} to ${to_name}`);
+  if (group_id && group_id !== 'all' && isValidObjectId(group_id)) {
+    settlementData.group = group_id;
+  }
+  if (from_id && isValidObjectId(from_id)) {
+    settlementData.from_user = from_id;
+  }
+  if (to_id && isValidObjectId(to_id)) {
+    settlementData.to_user = to_id;
+  }
+
+  const settlement = await Settlement.create(settlementData);
+
+  if (settlement.group) {
+    await logActivity(settlement.group, req.user.id, 'settlement', 'paid', `₹${parsedAmount} to ${to_name}`);
+  }
 
   if (to_id) {
     await createNotification(to_id, 'settle', 'Settlement Received', `${from_name} paid you ₹${parsedAmount}`, { settlement_id: settlement._id, group_id });
@@ -607,12 +609,16 @@ router.post('/', authenticate, asyncHandler(async (req, res) => {
 router.get('/history', authenticate, asyncHandler(async (req, res) => {
   const { group_id } = req.query;
 
-  let query = { status: { $in: ['completed', 'confirmed'] } };
+  let query = { status: { $in: ['completed', 'confirmed', 'reversed'] } };
   if (group_id && group_id !== 'all') {
     query.group = group_id;
   } else {
     const userGroups = await Group.find({ 'members.user': req.user._id }, '_id');
-    query.group = { $in: userGroups.map(g => g._id) };
+    query.$or = [
+      { group: { $in: userGroups.map(g => g._id) } },
+      { group: null },
+      { group: { $exists: false } }
+    ];
   }
 
   const history = await Settlement.find(query)
@@ -623,7 +629,24 @@ router.get('/history', authenticate, asyncHandler(async (req, res) => {
   res.json({ history });
 }));
 
-// ── Delete Settlement ─────────────────────────────────────────────
+// ── Undo Settlement ───────────────────────────────────────────────
+router.post('/:id/undo', authenticate, asyncHandler(async (req, res) => {
+  const settlement = await Settlement.findById(req.params.id);
+  if (!settlement) throw new AppError('Settlement not found', 404);
+  
+  if (settlement.status === 'reversed') throw new AppError('Settlement is already reversed', 400);
+
+  settlement.status = 'reversed';
+  await settlement.save();
+
+  if (settlement.group) {
+    await logActivity(settlement.group, req.user.id, 'settlement_undo', 'reversed', `₹${settlement.amount} paid by ${settlement.from_name}`);
+  }
+
+  res.json({ success: true, settlement });
+}));
+
+// ── Delete Settlement (Internal) ──────────────────────────────────
 router.delete('/:id', authenticate, asyncHandler(async (req, res) => {
   const settlement = await Settlement.findByIdAndDelete(req.params.id);
   if (!settlement) throw new AppError('Settlement not found', 404);

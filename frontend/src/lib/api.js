@@ -55,7 +55,11 @@ export const auth = {
   logout:      (token)         => post('/auth/logout',   {}, token),
   me:          (token)         => get('/auth/me',        token),
   updateMe:    (data, token)   => patch('/auth/me',      data, token),
+  updateProfile: (data, token) => patch('/auth/me',      data, token),
+  changePassword: (data, token) => post('/auth/change-password', data, token),
+  deleteAccount: (token)       => del('/auth/me',        token),
   search:      (q, token)      => get(`/auth/search?q=${encodeURIComponent(q)}`, token),
+  pinGroup:    (group_id, token) => post('/auth/me/pin-group', { group_id }, token),
 };
 
 // ── Groups ────────────────────────────────────────────────────────
@@ -97,6 +101,7 @@ export const settle = {
   plan:      (gid, mode, token) => get(`/settle/plan?group_id=${gid || 'all'}&settle_mode=${mode || 'transparent'}`, token),
   record:    (data, token)    => post('/settle', data, token),
   history:   (gid, token)     => get(`/settle/history?group_id=${gid || 'all'}`, token),
+  undo:      (id, token)      => post(`/settle/${id}/undo`, {}, token),
   delete:    (id, token)      => del(`/settle/${id}`, token),
 };
 
