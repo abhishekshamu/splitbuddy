@@ -1,4 +1,12 @@
 import React from 'react';
+import { useAuthStore } from '../store';
+import { formatMoney, normalizeCurrency, defaultCurrency } from '../lib/prefs';
+
+const useCurrencyFormatter = () => {
+  const user = useAuthStore(s => s.user);
+  const currentCurrency = normalizeCurrency(user?.settings?.currency || defaultCurrency);
+  return (value) => formatMoney(value, currentCurrency);
+};
 
 export const ActionButton = ({ onClick, variant = 'primary', children, style, className = '', ...props }) => {
   const baseClass = 'btn ' + (variant === 'primary' ? 'btn-primary' : variant === 'ghost' ? 'btn-ghost' : variant === 'violet' ? 'btn-violet' : variant === 'danger' ? 'btn-danger' : '');
@@ -17,6 +25,7 @@ export const StatusBadge = ({ status }) => {
 };
 
 export const HistoryCard = ({ settlement, onUndo }) => {
+  const formatCurrency = useCurrencyFormatter();
   const isReversed = settlement.status === 'reversed';
   const amount = settlement.amount || 0;
   
@@ -39,7 +48,7 @@ export const HistoryCard = ({ settlement, onUndo }) => {
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-        <div className={`hc-amount ${isReversed ? 'strike' : ''}`}>₹{amount.toLocaleString()}</div>
+        <div className={`hc-amount ${isReversed ? 'strike' : ''}`}>{formatCurrency(amount)}</div>
         <StatusBadge status={settlement.status} />
         {!isReversed && onUndo && (
           <button className="btn btn-sm btn-ghost hc-undo-btn" onClick={() => onUndo(settlement._id, settlement.group?._id || settlement.group)}>Undo</button>
@@ -50,6 +59,7 @@ export const HistoryCard = ({ settlement, onUndo }) => {
 };
 
 export const SettlementCard = ({ fromUser, toUser, amount, onSettle, type = 'receive' }) => {
+  const formatCurrency = useCurrencyFormatter();
   return (
     <div className={`settlement-card type-${type}`}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -58,7 +68,7 @@ export const SettlementCard = ({ fromUser, toUser, amount, onSettle, type = 'rec
         </div>
         <div>
           <div className="sc-name">{type === 'receive' ? fromUser.name : toUser.name}</div>
-          <div className={`sc-amount ${type}`}>₹{amount.toLocaleString()}</div>
+          <div className={`sc-amount ${type}`}>{formatCurrency(amount)}</div>
         </div>
       </div>
       <ActionButton variant={type === 'receive' ? 'primary' : 'ghost'} onClick={onSettle}>
@@ -69,6 +79,7 @@ export const SettlementCard = ({ fromUser, toUser, amount, onSettle, type = 'rec
 };
 
 export const TimelineItem = ({ activity }) => {
+  const formatCurrency = useCurrencyFormatter();
   const isSettlement = activity.type === 'settlement' || activity.type === 'settlement_undo';
   const isReversed = activity.status === 'reversed' || activity.type === 'settlement_undo';
   
@@ -85,7 +96,7 @@ export const TimelineItem = ({ activity }) => {
           </div>
           {activity.amount && (
             <div className={`tl-amount ${isReversed ? 'strike' : ''}`}>
-              ₹{activity.amount.toLocaleString()}
+              {formatCurrency(activity.amount)}
             </div>
           )}
         </div>

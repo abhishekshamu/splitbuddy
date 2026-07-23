@@ -141,7 +141,7 @@ function Reports({ nav, openModal }) {
       </div>
 
       {/* SECTION 1: HERO CARD */}
-      <div className="card" style={{ background: '#12121a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 24, padding: 'clamp(20px, 4vw, 32px)' }}>
+      <div className="card" style={{ background: 'var(--bg-card)', border: '1px solid var(--report-card-border)', borderRadius: 24, padding: 'clamp(20px, 4vw, 32px)' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           <div>
             <div style={{ fontSize: 13, color: 'var(--tx3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Net Balance</div>
@@ -207,7 +207,7 @@ function Reports({ nav, openModal }) {
           <div className="card" style={{ borderRadius: 20, padding: 20, marginBottom: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--lime)', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Pending to Receive</div>
             {toReceiveList.map((t, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toReceiveList.length - 1 ? 12 : 0, borderBottom: i < toReceiveList.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toReceiveList.length - 1 ? 12 : 0, borderBottom: i < toReceiveList.length - 1 ? '1px solid var(--table-border)' : 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                   <div className="avatar sm" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>{t.from_avatar || t.from_name[0]}</div>
                   <div style={{ minWidth: 0 }}>
@@ -226,7 +226,7 @@ function Reports({ nav, openModal }) {
           <div className="card" style={{ borderRadius: 20, padding: 20, marginBottom: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: '#ff6060', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Pending to Pay</div>
             {toPayList.map((t, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toPayList.length - 1 ? 12 : 0, borderBottom: i < toPayList.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toPayList.length - 1 ? 12 : 0, borderBottom: i < toPayList.length - 1 ? '1px solid var(--table-border)' : 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                   <div className="avatar sm" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>{t.to_avatar || t.to_name[0]}</div>
                   <div style={{ minWidth: 0 }}>
@@ -252,7 +252,7 @@ function Reports({ nav, openModal }) {
               return (
                 <div key={s._id} className={`settle-history-item ${isReversed ? 'reversed' : ''}`}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
-                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: isReversed ? 'rgba(255,255,255,0.05)' : 'rgba(181,255,77,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>{isReversed ? '\u21A9' : '\u2705'}</div>
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: isReversed ? 'var(--glass-soft)' : 'rgba(181,255,77,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>{isReversed ? '\u21A9' : '\u2705'}</div>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: isReversed ? 'var(--tx3)' : 'var(--tx)', textDecoration: isReversed ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fromName} paid {toName}</div>
                       <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 2 }}>{settledDate.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>

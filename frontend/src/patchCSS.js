@@ -15,7 +15,7 @@ const cssToAdd = `
 
   .status-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
   .status-badge.completed { background: rgba(181,255,77,0.12); color: var(--lime); }
-  .status-badge.reversed { background: rgba(255,255,255,0.08); color: var(--tx3); }
+  .status-badge.reversed { background: var(--glass-soft); color: var(--tx3); }
   .strike { text-decoration: line-through; }
 
   .hide-scroll::-webkit-scrollbar { display: none; }
@@ -26,7 +26,7 @@ const cssToAdd = `
   .filter-chip:not(.active) { background: var(--bg-card); color: var(--tx2); }
 
   .settle-history-item { padding: 16px; border-radius: 16px; background: var(--bg-glass); border: 1px solid var(--border); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; transition: all 0.2s; }
-  .settle-history-item.reversed { opacity: 0.65; border-color: rgba(255,255,255,0.04); }
+  .settle-history-item.reversed { opacity: 0.65; border-color: var(--border2); }
   @media(max-width: 430px) { .settle-history-item { flex-direction: column; align-items: flex-start; } }
 
   @media(max-width: 768px) {

@@ -1,6 +1,15 @@
 import React from 'react';
+import { useAuthStore } from '../store';
+import { formatMoney, normalizeCurrency, defaultCurrency } from '../lib/prefs';
+
+const useCurrencyFormatter = () => {
+  const user = useAuthStore(s => s.user);
+  const currentCurrency = normalizeCurrency(user?.settings?.currency || defaultCurrency);
+  return (value) => formatMoney(value, currentCurrency);
+};
 
 export default function AccountingDebugPanel({ debugData, balances }) {
+  const formatCurrency = useCurrencyFormatter();
   if (!debugData) return null;
 
   const {
@@ -30,21 +39,21 @@ export default function AccountingDebugPanel({ debugData, balances }) {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 30 }}>
-        <div style={{ background: "rgba(0,0,0,0.3)", padding: 16, borderRadius: 12 }}>
+        <div style={{ background: "var(--panel-bg-alt)", padding: 16, borderRadius: 12 }}>
           <div style={{ fontSize: 11, color: "var(--tx3)", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Total Expenses</div>
-          <div style={{ fontSize: 20, fontFamily: "var(--fd)", fontWeight: 800, color: "var(--cyan)" }}>₹{totalExpenses.toFixed(2)}</div>
+          <div style={{ fontSize: 20, fontFamily: "var(--fd)", fontWeight: 800, color: "var(--cyan)" }}>{formatCurrency(totalExpenses)}</div>
         </div>
-        <div style={{ background: "rgba(0,0,0,0.3)", padding: 16, borderRadius: 12 }}>
+        <div style={{ background: "var(--panel-bg-alt)", padding: 16, borderRadius: 12 }}>
           <div style={{ fontSize: 11, color: "var(--tx3)", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Total Credits (+ve)</div>
-          <div style={{ fontSize: 20, fontFamily: "var(--fd)", fontWeight: 800, color: "var(--lime)" }}>₹{sumPositive.toFixed(2)}</div>
+          <div style={{ fontSize: 20, fontFamily: "var(--fd)", fontWeight: 800, color: "var(--lime)" }}>{formatCurrency(sumPositive)}</div>
         </div>
-        <div style={{ background: "rgba(0,0,0,0.3)", padding: 16, borderRadius: 12 }}>
+        <div style={{ background: "var(--panel-bg-alt)", padding: 16, borderRadius: 12 }}>
           <div style={{ fontSize: 11, color: "var(--tx3)", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Total Debits (-ve)</div>
-          <div style={{ fontSize: 20, fontFamily: "var(--fd)", fontWeight: 800, color: "var(--pink)" }}>₹{sumNegative.toFixed(2)}</div>
+          <div style={{ fontSize: 20, fontFamily: "var(--fd)", fontWeight: 800, color: "var(--pink)" }}>{formatCurrency(sumNegative)}</div>
         </div>
-        <div style={{ background: "rgba(0,0,0,0.3)", padding: 16, borderRadius: 12 }}>
+        <div style={{ background: "var(--panel-bg-alt)", padding: 16, borderRadius: 12 }}>
           <div style={{ fontSize: 11, color: "var(--tx3)", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Ledger Difference</div>
-          <div style={{ fontSize: 20, fontFamily: "var(--fd)", fontWeight: 800, color: ledgerDiff > 0.02 ? "var(--pink)" : "var(--lime)" }}>₹{ledgerDiff.toFixed(2)}</div>
+          <div style={{ fontSize: 20, fontFamily: "var(--fd)", fontWeight: 800, color: ledgerDiff > 0.02 ? "var(--pink)" : "var(--lime)" }}>{formatCurrency(ledgerDiff)}</div>
         </div>
       </div>
 
@@ -91,7 +100,7 @@ export default function AccountingDebugPanel({ debugData, balances }) {
               </thead>
               <tbody>
                 {balances.map(b => (
-                  <tr key={b.id || b.full_name} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <tr key={b.id || b.full_name} style={{ borderBottom: "1px solid var(--table-border)" }}>
                     <td style={{ padding: "10px 8px", fontWeight: 600 }}>{b.full_name}</td>
                     <td style={{ padding: "10px 8px" }}>₹{b.total_paid?.toFixed(2)}</td>
                     <td style={{ padding: "10px 8px" }}>₹{b.total_owed?.toFixed(2)}</td>
@@ -122,9 +131,9 @@ export default function AccountingDebugPanel({ debugData, balances }) {
               </thead>
               <tbody>
                 {rawExpenses.map(e => (
-                  <tr key={e._id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <tr key={e._id} style={{ borderBottom: "1px solid var(--table-border)" }}>
                     <td style={{ padding: "10px 8px" }}>{e.title}</td>
-                    <td style={{ padding: "10px 8px", fontFamily: "monospace", color: "var(--cyan)" }}>₹{e.amount}</td>
+                    <td style={{ padding: "10px 8px", fontFamily: "monospace", color: "var(--cyan)" }}>{formatCurrency(e.amount)}</td>
                     <td style={{ padding: "10px 8px" }}>{e.paid_by_name || 'Unknown'}</td>
                     <td style={{ padding: "10px 8px" }}>{e.split_type}</td>
                     <td style={{ padding: "10px 8px" }}>{e.splits?.length || 0} pax</td>

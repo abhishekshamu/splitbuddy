@@ -1,6 +1,15 @@
 import React from 'react';
+import { useAuthStore } from '../store';
+import { formatMoney, normalizeCurrency, defaultCurrency } from '../lib/prefs';
+
+const useCurrencyFormatter = () => {
+  const user = useAuthStore(s => s.user);
+  const currentCurrency = normalizeCurrency(user?.settings?.currency || defaultCurrency);
+  return (value) => formatMoney(value, currentCurrency);
+};
 
 export default function MyBalancesModal({ onClose, balances, filterMember }) {
+  const formatCurrency = useCurrencyFormatter();
   let { toReceiveList, toPayList } = balances;
 
   if (filterMember) {
@@ -42,15 +51,8 @@ export default function MyBalancesModal({ onClose, balances, filterMember }) {
                           <div style={{ fontSize: 12, color: "var(--tx3)", marginTop: 2 }}>owes you</div>
                         </div>
                       </div>
-                      <div style={{ fontSize: 20, fontWeight: 800, color: "var(--lime)", fontFamily: "var(--fd)" }}>₹{s.amount.toLocaleString()}</div>
-                    </div>
-                    
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12, background: "rgba(0,0,0,0.3)", borderRadius: 8 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between" }}>
-                        <span style={{ fontSize: 12, color: "var(--tx3)" }}>Group</span>
-                        <span style={{ fontSize: 13, color: "var(--tx)", fontWeight: 600 }}>{s.group_name}</span>
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: "var(--lime)", fontFamily: "var(--fd)" }}>{formatCurrency(s.amount)}</div>
                         <span style={{ fontSize: 12, color: "var(--tx3)" }}>Reason</span>
                         <span style={{ fontSize: 13, color: "var(--tx)", fontWeight: 600 }}>{s.expense_title || 'Expense'}</span>
                       </div>
@@ -85,7 +87,7 @@ export default function MyBalancesModal({ onClose, balances, filterMember }) {
                       <div style={{ fontSize: 20, fontWeight: 800, color: "var(--rose)", fontFamily: "var(--fd)" }}>₹{s.amount.toLocaleString()}</div>
                     </div>
                     
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12, background: "rgba(0,0,0,0.3)", borderRadius: 8 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12, background: "var(--panel-bg-alt)", borderRadius: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between" }}>
                         <span style={{ fontSize: 12, color: "var(--tx3)" }}>Group</span>
                         <span style={{ fontSize: 13, color: "var(--tx)", fontWeight: 600 }}>{s.group_name}</span>

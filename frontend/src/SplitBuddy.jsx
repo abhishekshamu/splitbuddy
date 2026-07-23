@@ -3,7 +3,11 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useAuthStore, useGroupStore, useExpenseStore, useUIStore } from "./store";
 import api from "./lib/api";
 import dynamic from 'next/dynamic';
+import { currencyOptions, defaultCurrency, formatMoney, normalizeCurrency, normalizeLanguage, translate, translatePageTitle } from "./lib/prefs";
 import AccountingDebugPanel from './components/AccountingDebugPanel';
+
+const getCurrentCurrency = () => normalizeCurrency(useAuthStore.getState().user?.settings?.currency || defaultCurrency);
+const formatCurrencyValue = (value) => formatMoney(value, getCurrentCurrency());
 
 import MyBalancesModal from './components/MyBalancesModal';
 
@@ -53,6 +57,7 @@ const CSS = `
   :root {
     --bg-app: #101014;
     --bg-card: #17171d;
+    --bg-panel: #17171d;
     --border-subtle: #232330;
     --text-primary: #f2f2f5;
     --text-secondary: #8b8b99;
@@ -62,8 +67,19 @@ const CSS = `
     --accent-red: #ff5470;
     --bg-glass: rgba(255,255,255,0.04);
     --bg-glass2: rgba(255,255,255,0.07);
+    --topbar-bg: rgba(10, 10, 15, 0.85);
+    --overlay: rgba(0,0,0,0.72);
+    --glass-soft: rgba(255,255,255,0.05);
+    --glass-medium: rgba(255,255,255,0.05);
+    --hover-bg: rgba(255,255,255,0.1);
+    --shadow-soft: 0 10px 40px rgba(0,0,0,0.4);
+    --shadow-strong: 0 40px 80px rgba(0,0,0,0.6);
     --border: var(--border-subtle);
     --border2: rgba(255,255,255,0.13);
+    --table-border: rgba(255,255,255,0.05);
+    --report-card-border: rgba(255,255,255,0.08);
+    --panel-bg-alt: rgba(0,0,0,0.2);
+    --report-hero-bg: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(0,0,0,0.2));
     
     /* Legacy fallbacks (to prevent breaking untouched components temporarily) */
     --bg: var(--bg-app);
@@ -80,6 +96,50 @@ const CSS = `
     --fd: 'Inter', sans-serif;
     --fb: 'Inter', sans-serif;
     --fn: 'Inter', sans-serif;
+  }
+  .dark {
+    --bg-app: #101014;
+    --bg-card: #17171d;
+    --bg-panel: #17171d;
+    --border-subtle: #232330;
+    --text-primary: #f2f2f5;
+    --text-secondary: #8b8b99;
+    --text-muted: #65656f;
+    --bg-glass: rgba(255,255,255,0.04);
+    --bg-glass2: rgba(255,255,255,0.07);
+    --topbar-bg: rgba(10, 10, 15, 0.85);
+    --overlay: rgba(0,0,0,0.72);
+    --glass-soft: rgba(255,255,255,0.05);
+    --glass-medium: rgba(255,255,255,0.05);
+    --hover-bg: rgba(255,255,255,0.1);
+    --shadow-soft: 0 10px 40px rgba(0,0,0,0.4);
+    --shadow-strong: 0 40px 80px rgba(0,0,0,0.6);
+    --border: var(--border-subtle);
+    --border2: rgba(255,255,255,0.13);
+  }
+  .light {
+    --bg-app: #f5f6f8;
+    --bg-card: #ffffff;
+    --bg-panel: #f8fafc;
+    --border-subtle: #d3d6df;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #6b7280;
+    --bg-glass: rgba(243,244,246,0.90);
+    --bg-glass2: rgba(248,250,252,0.95);
+    --topbar-bg: rgba(255,255,255,0.96);
+    --overlay: rgba(255,255,255,0.75);
+    --glass-soft: rgba(15,23,42,0.03);
+    --glass-medium: rgba(15,23,42,0.05);
+    --hover-bg: rgba(15,23,42,0.04);
+    --shadow-soft: 0 10px 40px rgba(15,23,42,0.08);
+    --shadow-strong: 0 40px 80px rgba(15,23,42,0.12);
+    --border: var(--border-subtle);
+    --border2: rgba(15,23,42,0.08);
+    --table-border: rgba(0,0,0,0.08);
+    --report-card-border: rgba(0,0,0,0.08);
+    --panel-bg-alt: rgba(15,23,42,0.05);
+    --report-hero-bg: linear-gradient(135deg, rgba(15,23,42,0.03), rgba(15,23,42,0.05));
   }
   html,body,#root { height:100%; background:var(--bg-app); color:var(--text-primary); font-family:'Inter', sans-serif; overflow-x: hidden; }
   ::-webkit-scrollbar { width:5px; } ::-webkit-scrollbar-thumb { background:var(--border2); border-radius:99px; }
@@ -98,7 +158,7 @@ const CSS = `
 
   .status-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
   .status-badge.completed { background: rgba(181,255,77,0.12); color: var(--lime); }
-  .status-badge.reversed { background: rgba(255,255,255,0.08); color: var(--tx3); }
+  .status-badge.reversed { background: var(--glass-soft); color: var(--tx3); }
   .strike { text-decoration: line-through; }
 
   .hide-scroll::-webkit-scrollbar { display: none; }
@@ -109,7 +169,7 @@ const CSS = `
   .filter-chip:not(.active) { background: var(--bg-card); color: var(--tx2); }
 
   .settle-history-item { padding: 16px; border-radius: 16px; background: var(--bg-glass); border: 1px solid var(--border); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; transition: all 0.2s; }
-  .settle-history-item.reversed { opacity: 0.65; border-color: rgba(255,255,255,0.04); }
+  .settle-history-item.reversed { opacity: 0.65; border-color: var(--border2); }
   @media(max-width: 480px) { 
     .settle-history-item { flex-direction: column; align-items: flex-start; } 
     .settle-history-item > div:last-child { width: 100%; flex-wrap: wrap; gap: 8px; justify-content: flex-start !important; }
@@ -122,7 +182,7 @@ const CSS = `
 
   /* --- LANDING V2 --- */
   .landing-v2 { display: flex; flex-direction: column; min-height: 100vh; background: var(--bg); overflow-y: auto; overflow-x: hidden; }
-  .landing-v2-nav { position: sticky; top: 0; z-index: 100; display: flex; justify-content: space-between; align-items: center; padding: 16px 5%; background: rgba(10, 10, 15, 0.85); backdrop-filter: blur(16px); border-bottom: 1px solid var(--border); }
+  .landing-v2-nav { position: sticky; top: 0; z-index: 100; display: flex; justify-content: space-between; align-items: center; padding: 16px 5%; background: var(--topbar-bg); backdrop-filter: blur(16px); border-bottom: 1px solid var(--border); }
   .landing-v2-hero { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 5%; text-align: left; max-width: 1200px; margin: 0 auto; min-height: 80vh; }
   @media (min-width: 768px) { .landing-v2-hero { flex-direction: row; gap: 40px; align-items: center; } .landing-v2-hero > * { flex: 1; } }
   .landing-v2-badge { display: inline-block; padding: 6px 12px; background: rgba(181, 255, 77, 0.1); color: var(--lime); border-radius: 20px; font-size: 13px; font-weight: 700; margin-bottom: 24px; border: 1px solid rgba(181, 255, 77, 0.2); }
@@ -141,14 +201,14 @@ const CSS = `
   .landing-v2-grid { display: grid; grid-template-columns: 1fr; gap: 24px; }
   @media (min-width: 600px) { .landing-v2-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (min-width: 900px) { .landing-v2-grid { grid-template-columns: repeat(3, 1fr); } }
-  .landing-v2-card { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(10px); border: 1px solid var(--border); padding: 32px 24px; border-radius: 20px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); display: flex; flex-direction: column; gap: 12px; }
-  .landing-v2-card:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.05); border-color: rgba(181, 255, 77, 0.3); box-shadow: 0 10px 30px rgba(181, 255, 77, 0.05); }
+  .landing-v2-card { background: var(--bg-glass); backdrop-filter: blur(10px); border: 1px solid var(--border); padding: 32px 24px; border-radius: 20px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); display: flex; flex-direction: column; gap: 12px; }
+  .landing-v2-card:hover { transform: translateY(-5px); background: var(--bg-glass2); border-color: rgba(181, 255, 77, 0.3); box-shadow: 0 10px 30px rgba(181, 255, 77, 0.05); }
   .landing-v2-card-icon { font-size: 32px; width: 56px; height: 56px; border-radius: 14px; background: rgba(181, 255, 77, 0.1); display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
   .landing-v2-card-title { font-size: 18px; font-weight: 700; font-family: var(--fd); color: var(--tx); }
   .landing-v2-card-desc { font-size: 14px; color: var(--tx2); line-height: 1.5; }
   .landing-v2-timeline { display: flex; flex-direction: column; gap: 20px; max-width: 600px; margin: 0 auto; }
-  .landing-v2-step { display: flex; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); border-radius: 16px; padding: 24px; gap: 20px; align-items: flex-start; transition: all 0.3s; }
-  .landing-v2-step:hover { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.1); }
+  .landing-v2-step { display: flex; background: var(--bg-glass); border: 1px solid var(--border); border-radius: 16px; padding: 24px; gap: 20px; align-items: flex-start; transition: all 0.3s; }
+  .landing-v2-step:hover { background: var(--bg-glass2); border-color: var(--border2); }
   .landing-v2-step-num { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; background: var(--lime); color: #000; font-family: var(--fd); font-weight: 800; font-size: 18px; display: flex; align-items: center; justify-content: center; }
   .landing-v2-step-info { flex: 1; }
   .landing-v2-step-title { font-size: 18px; font-weight: 700; font-family: var(--fd); margin-bottom: 6px; }
@@ -183,7 +243,7 @@ const CSS = `
   .user-role { font-size:11px; color:var(--tx3); }
 
   .main { flex:1; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; }
-  .topbar { padding:18px 28px; display:flex; align-items:center; gap:14px; border-bottom:1px solid var(--border); background:rgba(10,10,15,0.92); backdrop-filter:blur(20px); position:sticky; top:0; z-index:5; flex-shrink:0; width: 100%; box-sizing: border-box; }
+  .topbar { padding:18px 28px; display:flex; align-items:center; gap:14px; border-bottom:1px solid var(--border); background:var(--topbar-bg); backdrop-filter:blur(20px); position:sticky; top:0; z-index:5; flex-shrink:0; width: 100%; box-sizing: border-box; }
   .topbar-title { font-family:var(--fd); font-size:clamp(18px, 4vw, 28px); font-weight:700; flex:1; display:flex; align-items:center; }
   .mobile-logo { display:none; }
   .topbar-actions { display:flex; gap:7px; align-items:center; }
@@ -234,7 +294,7 @@ const CSS = `
   .bal-name { font-weight:600; }
   .bal-amt { font-family:var(--fn); font-size: 22px; font-weight:700; font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; line-height: 1; }
   .bal-amt.owe{color:#ff6060;} .bal-amt.gets{color:#4dff88;}
-  .prog-track { height:5px; background:rgba(255,255,255,0.05); border-radius:99px; overflow:hidden; }
+  .prog-track { height:5px; background:var(--glass-medium); border-radius:99px; overflow:hidden; }
   .prog-fill { height:100%; border-radius:99px; transition:width .7s cubic-bezier(.4,0,.2,1); }
 
   .group-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
@@ -248,7 +308,7 @@ const CSS = `
   .group-total { font-family:var(--fn); font-size:26px; font-weight:800; font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; line-height: 1; }
   .member-avatars { display:flex; }
 
-  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.72); backdrop-filter:blur(8px); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px; animation:fadeIn .2s ease; }
+  .modal-overlay { position:fixed; inset:0; background:var(--overlay); backdrop-filter:blur(8px); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px; animation:fadeIn .2s ease; }
   .modal { background:var(--bg-card); border:1px solid var(--border2); border-radius:26px; padding:28px; width:min(95vw, 500px); max-height:90vh; overflow-y:auto; animation:slideUp .22s cubic-bezier(.4,0,.2,1); box-shadow:0 40px 80px rgba(0,0,0,0.6); display: flex; flex-direction: column; box-sizing: border-box; }
   .modal-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; }
   .modal-title { font-family:var(--fd); font-size:clamp(18px, 4vw, 24px); font-weight:700; }
@@ -356,7 +416,7 @@ const CSS = `
   .link-url { font-size: 9px; color: var(--tx3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .notes-v3-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 15px; }
-  .note-card-v3 { background: #1a1a24; border: 1px solid var(--border); padding: 14px; border-radius: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+  .note-card-v3 { background: var(--bg-card); border: 1px solid var(--border); padding: 14px; border-radius: 14px; box-shadow: var(--shadow-soft); }
   .note-h { display: flex; justify-content: space-between; margin-bottom: 8px; }
   .note-t { font-size: 13px; font-weight: 800; color: var(--amber); }
   .note-b { font-size: 12px; color: var(--tx); line-height: 1.5; min-height: 40px; margin-bottom: 10px; }
@@ -371,7 +431,7 @@ const CSS = `
   .act-time { font-size: 9px; color: var(--tx3); margin-top: 4px; font-weight: 700; }
 
   /* Quick Action Bar */
-  .quick-action-bar { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(18,18,26,0.85); backdrop-filter: blur(15px); border: 1px solid var(--border2); padding: 8px 15px; border-radius: 50px; display: flex; gap: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 100; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+  .quick-action-bar { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: var(--bg-glass); backdrop-filter: blur(15px); border: 1px solid var(--border2); padding: 8px 15px; border-radius: 50px; display: flex; gap: 15px; box-shadow: var(--shadow-soft); z-index: 100; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
   .quick-action-bar:hover { bottom: 35px; box-shadow: 0 15px 50px rgba(0,0,0,0.6); }
   .qa-btn { background: none; border: none; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; transition: all 0.2s; }
   .qa-btn:hover { transform: translateY(-3px); }
@@ -537,8 +597,8 @@ const CSS = `
 
   .autocomplete-dropdown {
     position: absolute; top: 48px; left: 0; right: 0;
-    background: #181825; border: 1px solid var(--border2);
-    border-radius: 12px; z-index: 100; box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+    background: var(--bg-card); border: 1px solid var(--border2);
+    border-radius: 12px; z-index: 100; box-shadow: var(--shadow-soft);
     max-height: 260px; overflow-y: auto; overflow-x: hidden;
   }
   .suggestion-item {
@@ -546,7 +606,7 @@ const CSS = `
     cursor: pointer; transition: all .15s; border-bottom: 1px solid var(--border);
   }
   .suggestion-item:last-child { border-bottom: none; }
-  .suggestion-item:hover { background: rgba(255,255,255,0.05); }
+  .suggestion-item:hover { background: var(--hover-bg); }
   .badge-reg {
     font-size: 9px; font-weight: 700; color: #3de8d0; background: rgba(61,232,208,0.1);
     padding: 3px 7px; border-radius: 5px; text-transform: uppercase; letter-spacing: .3px;
@@ -571,7 +631,7 @@ const CSS = `
   .bar-chart-v { display: flex; flex-direction: column; gap: 12px; }
   .bar-row { display: flex; align-items: center; gap: 12px; }
   .bar-label { font-size: 13px; width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bar-track { flex: 1; height: 12px; background: rgba(255,255,255,0.05); border-radius: 99px; overflow: hidden; }
+  .bar-track { flex: 1; height: 12px; background: var(--glass-soft); border-radius: 99px; overflow: hidden; }
   .bar-fill-v { height: 100%; border-radius: 99px; transition: width 1s ease; }
   .bar-val { font-family: var(--fn); font-size: 13px; font-weight: 700; width: 70px; text-align: right; font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
 
@@ -634,10 +694,10 @@ const CSS = `
     right: 24px; 
     width: 100%; 
     max-width: 380px; 
-    background: #15151a; 
+    background: var(--bg-card); 
     border: 1px solid var(--border); 
     border-radius: 24px; 
-    box-shadow: 0 25px 60px rgba(0,0,0,0.8); 
+    box-shadow: var(--shadow-soft); 
     z-index: 2500; 
     display: flex; 
     flex-direction: column; 
@@ -654,18 +714,18 @@ const CSS = `
   .notif-header { padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
   .notif-title { font-family: var(--fd); font-size: 18px; font-weight: 800; }
   .notif-list { flex: 1; overflow-y: auto; padding: 10px 0; }
-  .notif-item { padding: 14px 22px; display: flex; gap: 14px; cursor: pointer; transition: background 0.2s; border-bottom: 1px solid rgba(255,255,255,0.03); position: relative; }
-  .notif-item:hover { background: rgba(255,255,255,0.04); }
+  .notif-item { padding: 14px 22px; display: flex; gap: 14px; cursor: pointer; transition: background 0.2s; border-bottom: 1px solid var(--border2); position: relative; }
+  .notif-item:hover { background: var(--bg-glass); }
   .notif-item.unread { background: rgba(181,255,77,0.03); }
   .notif-item.unread::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--lime); }
   
-  .notif-icon { width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .notif-icon { width: 40px; height: 40px; border-radius: 12px; background: var(--glass-soft); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
   .notif-content { flex: 1; min-width: 0; }
   .notif-item-title { font-size: 13.5px; font-weight: 700; color: var(--tx); margin-bottom: 3px; }
   .notif-item-body { font-size: 12px; color: var(--tx3); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .notif-item-time { font-size: 10px; color: var(--tx3); margin-top: 6px; font-weight: 600; }
   
-  .notif-footer { padding: 14px; text-align: center; border-top: 1px solid var(--border); background: rgba(0,0,0,0.1); }
+  .notif-footer { padding: 14px; text-align: center; border-top: 1px solid var(--border); background: var(--bg-glass); }
   .notif-empty { padding: 60px 20px; text-align: center; color: var(--tx3); }
   
   @media(max-width: 768px) {
@@ -685,9 +745,9 @@ const CSS = `
 
   .ctx-menu {
     position: absolute; top: calc(100% + 6px); right: 0; z-index: 200;
-    background: rgba(22,22,32,0.95); backdrop-filter: blur(20px);
+    background: var(--bg-card); backdrop-filter: blur(20px);
     border: 1px solid var(--border2); border-radius: 14px; padding: 6px;
-    min-width: 180px; box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+    min-width: 180px; box-shadow: var(--shadow-soft);
     animation: ctxIn 0.15s cubic-bezier(0.2, 0, 0.13, 1.5);
     transform-origin: top right;
   }
@@ -706,13 +766,13 @@ const CSS = `
 
   /* ── Delete Confirmation Modal ───────────────────────────── */
   .confirm-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(10px);
+    position: fixed; inset: 0; background: var(--overlay); backdrop-filter: blur(10px);
     z-index: 300; display: flex; align-items: center; justify-content: center; padding: 20px;
     animation: fadeIn 0.2s ease;
   }
   .confirm-modal {
     background: var(--bg-card); border: 1px solid var(--border2); border-radius: 22px;
-    padding: 32px; width: min(95vw, 420px); box-shadow: 0 40px 80px rgba(0,0,0,0.6);
+    padding: 32px; width: min(95vw, 420px); box-shadow: var(--shadow-strong);
     animation: slideUp 0.25s cubic-bezier(0.4, 0, 0.2, 1); text-align: center;
   }
   .confirm-icon { font-size: 48px; margin-bottom: 18px; display: block; }
@@ -722,13 +782,13 @@ const CSS = `
   .confirm-actions { display: flex; gap: 12px; }
   .confirm-actions .btn { flex: 1; justify-content: center; min-height: 48px; font-size: 14px; font-weight: 700; border-radius: 12px; }
   .btn-cancel { background: var(--bg-glass2); color: var(--tx); border: 1px solid var(--border2); }
-  .btn-cancel:hover { background: rgba(255,255,255,0.1); }
+  .btn-cancel:hover { background: var(--hover-bg); }
   .btn-delete-confirm { background: rgba(255,80,80,0.15); color: #ff6060; border: 1px solid rgba(255,80,80,0.25); }
   .btn-delete-confirm:hover { background: rgba(255,80,80,0.25); box-shadow: 0 0 20px rgba(255,80,80,0.15); }
 
   /* ── Mobile Bottom Sheet ─────────────────────────────────── */
   .bsheet-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(6px);
+    position: fixed; inset: 0; background: var(--overlay); backdrop-filter: blur(6px);
     z-index: 250; animation: fadeIn 0.2s ease; -webkit-tap-highlight-color: transparent;
   }
   .bsheet {
@@ -736,7 +796,7 @@ const CSS = `
     background: var(--bg-card); border-top: 1px solid var(--border2);
     border-radius: 22px 22px 0 0; padding: 12px 20px calc(20px + env(safe-area-inset-bottom));
     animation: sheetUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    box-shadow: 0 -20px 60px rgba(0,0,0,0.5);
+    box-shadow: var(--shadow-strong);
   }
   @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
   .bsheet-handle { width: 36px; height: 4px; background: var(--border2); border-radius: 99px; margin: 0 auto 16px; }
@@ -761,10 +821,10 @@ const CSS = `
   /* ── Undo Toast Bar ──────────────────────────────────────── */
   .undo-toast {
     position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
-    background: rgba(22,22,32,0.95); backdrop-filter: blur(20px);
+    background: var(--overlay); backdrop-filter: blur(20px);
     border: 1px solid var(--border2); border-radius: 14px;
     padding: 14px 20px; display: flex; align-items: center; gap: 14px;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.5); z-index: 400;
+    box-shadow: var(--shadow-soft); z-index: 400;
     animation: toastSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     min-width: 280px; max-width: 90vw;
   }
@@ -785,8 +845,8 @@ const CSS = `
   @keyframes undoCountdown { from { width: 100%; } to { width: 0%; } }
 
   /* ── GROUP PICKER ─────────────────────────────────────────────── */
-  .gp-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.72); backdrop-filter:blur(12px); z-index:1001; display:flex; align-items:center; justify-content:center; padding:20px; animation:fadeIn .2s ease; }
-  .gp-modal { background:var(--bg-card); border:1px solid var(--border2); border-radius:24px; width:min(95vw,480px); max-height:80vh; display:flex; flex-direction:column; animation:slideUp .25s cubic-bezier(.4,0,.2,1); box-shadow:0 40px 80px rgba(0,0,0,0.6); overflow:hidden; }
+  .gp-overlay { position:fixed; inset:0; background:var(--overlay); backdrop-filter:blur(12px); z-index:1001; display:flex; align-items:center; justify-content:center; padding:20px; animation:fadeIn .2s ease; }
+  .gp-modal { background:var(--bg-card); border:1px solid var(--border2); border-radius:24px; width:min(95vw,480px); max-height:80vh; display:flex; flex-direction:column; animation:slideUp .25s cubic-bezier(.4,0,.2,1); box-shadow: var(--shadow-strong); overflow:hidden; }
   .gp-header { padding:24px 24px 0; }
   .gp-header-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
   .gp-title { font-family:var(--fd); font-size:20px; font-weight:700; color:var(--tx); }
@@ -822,31 +882,33 @@ const CSS = `
   .chip-nav-container { display:flex; gap:10px; overflow-x:auto; padding-bottom:6px; margin-bottom:12px; scrollbar-width:none; -ms-overflow-style:none; }
   .chip-nav-container::-webkit-scrollbar { display:none; }
   
-  .g-chip { display:inline-flex; align-items:center; gap:8px; padding:0 20px; height:44px; border-radius:999px; background:var(--bg-card); border:1px solid rgba(255,255,255,0.05); color:var(--tx2); font-size:14px; font-weight:600; cursor:pointer; flex-shrink:0; transition:all 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275); user-select:none; }
+  .g-chip { display:inline-flex; align-items:center; gap:8px; padding:0 20px; height:44px; border-radius:999px; background:var(--bg-card); border:1px solid var(--border2); color:var(--tx2); font-size:14px; font-weight:600; cursor:pointer; flex-shrink:0; transition:all 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275); user-select:none; }
   .g-chip:hover { transform:translateY(-2px); border-color:rgba(181,255,77,0.3); color:var(--tx); box-shadow:0 6px 16px rgba(0,0,0,0.2), 0 0 12px rgba(181,255,77,0.05); }
   .g-chip.g-active { background:#ffffff; color:#000000; border-color:#ffffff; box-shadow:0 4px 12px rgba(255,255,255,0.2); }
   .g-chip.g-active .g-chip-badge { background:rgba(0,0,0,0.1); color:#000000; }
+  .light .g-chip.g-active { background: var(--bg-glass2); color: var(--tx); border-color: var(--border2); box-shadow: var(--shadow-soft); }
+  .light .g-chip.g-active .g-chip-badge { background: var(--bg-glass); color: var(--tx3); }
   
   .g-chip-icon { font-size:16px; }
-  .g-chip-badge { font-size:11px; padding:2px 6px; border-radius:10px; background:rgba(255,255,255,0.1); color:var(--tx3); font-weight:700; transition:all 0.15s ease; }
+  .g-chip-badge { font-size:11px; padding:2px 6px; border-radius:10px; background:var(--glass-soft); color:var(--tx3); font-weight:700; transition:all 0.15s ease; }
   
-  .g-search-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); display:flex; align-items:center; justify-content:center; z-index:10000; animation:gsFadeIn 0.2s ease; padding:20px; }
-  .g-search-modal { width:100%; max-width:480px; background:var(--bg-panel); border:1px solid rgba(255,255,255,0.1); border-radius:24px; box-shadow:0 24px 64px rgba(0,0,0,0.4); overflow:hidden; display:flex; flex-direction:column; max-height:85vh; animation:gsPop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+  .g-search-overlay { position:fixed; inset:0; background:var(--overlay); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); display:flex; align-items:center; justify-content:center; z-index:10000; animation:gsFadeIn 0.2s ease; padding:20px; }
+  .g-search-modal { width:100%; max-width:480px; background:var(--bg-panel); border:1px solid var(--border2); border-radius:24px; box-shadow:var(--shadow-soft); overflow:hidden; display:flex; flex-direction:column; max-height:85vh; animation:gsPop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
   
-  .g-search-header { padding:24px; border-bottom:1px solid rgba(255,255,255,0.05); }
+  .g-search-header { padding:24px; border-bottom:1px solid var(--border2); }
   .g-search-title { font-size:20px; font-weight:800; color:var(--tx); margin-bottom:16px; font-family:var(--fd); display:flex; justify-content:space-between; align-items:center; }
   .g-search-input-wrap { position:relative; }
   .g-search-input-wrap span { position:absolute; left:16px; top:50%; transform:translateY(-50%); color:var(--tx3); font-size:16px; }
-  .g-search-input { width:100%; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); padding:14px 16px 14px 44px; border-radius:16px; color:var(--tx); font-size:15px; transition:all 0.2s ease; outline:none; box-sizing:border-box; }
+  .g-search-input { width:100%; background:var(--bg-glass); border:1px solid var(--border2); padding:14px 16px 14px 44px; border-radius:16px; color:var(--tx); font-size:15px; transition:all 0.2s ease; outline:none; box-sizing:border-box; }
   .g-search-input:focus { border-color:var(--lime); background:rgba(181,255,77,0.02); box-shadow:0 0 0 4px rgba(181,255,77,0.1); }
   
   .g-search-list { overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:8px; flex:1; }
-  .g-search-card { display:flex; align-items:center; gap:16px; padding:16px; background:var(--bg-card); border:1px solid rgba(255,255,255,0.03); border-radius:16px; cursor:pointer; transition:all 0.2s ease; }
+  .g-search-card { display:flex; align-items:center; gap:16px; padding:16px; background:var(--bg-card); border:1px solid var(--border2); border-radius:16px; cursor:pointer; transition:all 0.2s ease; }
   .g-search-card:hover { transform:translateY(-2px); border-color:rgba(181,255,77,0.2); background:rgba(181,255,77,0.02); }
   .g-search-card.g-active { border-color:var(--lime); background:rgba(181,255,77,0.05); }
   .g-search-card.g-active .g-search-card-name { color:var(--lime); }
   
-  .g-search-card-icon { width:44px; height:44px; border-radius:12px; background:rgba(255,255,255,0.05); display:flex; align-items:center; justify-content:center; font-size:22px; flex-shrink:0; }
+  .g-search-card-icon { width:44px; height:44px; border-radius:12px; background:var(--glass-soft); display:flex; align-items:center; justify-content:center; font-size:22px; flex-shrink:0; }
   .g-search-card-info { flex:1; min-width:0; }
   .g-search-card-name { font-size:16px; font-weight:700; color:var(--tx); margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; transition:color 0.2s ease; }
   .g-search-card-meta { font-size:13px; color:var(--tx3); display:flex; align-items:center; gap:8px; font-weight:500; }
@@ -903,7 +965,7 @@ function DonutChart({ data }) {
       <svg width="100%" height="auto" viewBox="0 0 160 160" style={{ flexShrink: 0, maxWidth: '160px' }}>
         {paths.map((p, i) => <path key={i} d={p.path} fill={p.color} opacity=".85" />)}
         <circle cx="80" cy="80" r="37" fill="#12121a" />
-        <text x="80" y="75" textAnchor="middle" fill="#f0f0f8" fontSize="18" fontWeight="700" fontFamily="Inter" style={{ fontFeatureSettings: '"tnum"', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em' }}>₹{total >= 1000 ? Math.round(total / 100) / 10 + "K" : total.toLocaleString()}</text>
+        <text x="80" y="75" textAnchor="middle" fill="#f0f0f8" fontSize="18" fontWeight="700" fontFamily="Inter" style={{ fontFeatureSettings: '"tnum"', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em' }}>{formatCurrency(total)}</text>
         <text x="80" y="92" textAnchor="middle" fill="#8888a0" fontSize="10" fontFamily="DM Sans">Total</text>
       </svg>
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: '120px' }}>{data.map((d, i) => (
@@ -1026,7 +1088,7 @@ function GroupSearchModal({ onSelect, onClose, nav, allowAll = false }) {
           )}
         </div>
         
-        <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', gap: 12 }}>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--surface-border, rgba(255,255,255,0.05))', display: 'flex', gap: 12 }}>
           <button className="btn btn-primary" style={{ flex: 1, fontSize: 14 }} onClick={() => { onClose(); nav && nav('groups'); }}>+ Create Group</button>
         </div>
       </div>
@@ -1430,7 +1492,7 @@ function AddExpenseModal({ onClose, editExpense, group }) {
                 {/* Search Results Dropdown */}
                 {searchResults.length > 0 && (
                   <div style={{
-                    position: "absolute", top: 32, left: 0, width: 200, background: "#1a1a1a",
+                    position: "absolute", top: 32, left: 0, width: 200, background: "var(--bg-card)",
                     border: "1px solid var(--border)", borderRadius: 8, zIndex: 100, boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
                     maxHeight: 150, overflowY: "auto"
                   }}>
@@ -1953,7 +2015,7 @@ function Dashboard({ nav, openModal }) {
               <div style={{ fontSize: 12, color: "var(--tx3)", marginBottom: 12, textTransform: "uppercase", fontWeight: 700 }}>Members</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
                 {toReceiveGrouped.slice(0, 3).map((m, i) => (
-                  <div key={i} onClick={() => { setSelectedMember(m.name); setShowBalancesModal(true); }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", transition: "0.2s", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+                  <div key={i} onClick={() => { setSelectedMember(m.name); setShowBalancesModal(true); }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", transition: "0.2s", padding: "8px 12px", background: "var(--bg-glass)", borderRadius: 8 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--lime)" }}></div>
                       <div style={{ fontSize: 14, fontWeight: 600, color: "var(--tx)" }}>{m.name}</div>
@@ -1976,7 +2038,7 @@ function Dashboard({ nav, openModal }) {
               <div style={{ fontSize: 12, color: "var(--tx3)", marginBottom: 12, textTransform: "uppercase", fontWeight: 700 }}>Members</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
                 {toPayGrouped.slice(0, 3).map((m, i) => (
-                  <div key={i} onClick={() => { setSelectedMember(m.name); setShowBalancesModal(true); }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", transition: "0.2s", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+                  <div key={i} onClick={() => { setSelectedMember(m.name); setShowBalancesModal(true); }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", transition: "0.2s", padding: "8px 12px", background: "var(--bg-glass)", borderRadius: 8 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--rose)" }}></div>
                       <div style={{ fontSize: 14, fontWeight: 600, color: "var(--tx)" }}>{m.name}</div>
@@ -1993,7 +2055,7 @@ function Dashboard({ nav, openModal }) {
           </div>
         )}
 
-        <div style={{ marginTop: 24, padding: "16px 20px", background: "rgba(0,0,0,0.2)", borderRadius: 12, border: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ marginTop: 24, padding: "16px 20px", background: "var(--glass-medium)", borderRadius: 12, border: "1px solid var(--border2)", display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: "var(--tx)", textTransform: "uppercase", letterSpacing: 1 }}>💎 Net Balance :</div>
           <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "var(--fd)", color: netBalance > 0.01 ? "var(--lime)" : netBalance < -0.01 ? "var(--rose)" : "var(--tx3)" }}>
             {netBalance > 0.01 ? '+' : ''}₹{netBalance.toLocaleString()}
@@ -2041,7 +2103,7 @@ function Dashboard({ nav, openModal }) {
       {showBalancesModal && (
         <MyBalancesModal
           onClose={() => { setShowBalancesModal(false); setSelectedMember(null); }}
-          balances={{ toReceiveList: globalPlan.filter(t => t.to_name?.toLowerCase() === user?.full_name?.toLowerCase()), toPayList: globalPlan.filter(t => t.from_name?.toLowerCase() === user?.full_name?.toLowerCase()) }}
+          balances={{ toReceiveList, toPayList }}
           filterMember={selectedMember}
         />
       )}
@@ -2212,7 +2274,7 @@ function GroupDetail({ group, nav }) {
       {/* ── Beautiful Hero Card ──────────────────── */}
       <div className="card" style={{
         marginBottom: 32,
-        background: `linear-gradient(135deg, ${currentGroup.color ? currentGroup.color + '22' : 'rgba(255,255,255,0.05)'} 0%, var(--bg-card) 100%)`,
+        background: `linear-gradient(135deg, ${currentGroup.color ? currentGroup.color + '22' : 'var(--glass-soft)'} 0%, var(--bg-card) 100%)`,
         border: "1px solid var(--border)",
         borderRadius: 24,
         padding: "24px",
@@ -2229,7 +2291,7 @@ function GroupDetail({ group, nav }) {
         <div style={{ position: "relative", zIndex: 1, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
-              <div style={{ background: "rgba(0,0,0,0.2)", padding: "12px", borderRadius: 20, display: 'flex', color: 'var(--tx3)' }}><Users size={48} /></div>
+              <div style={{ background: "var(--glass-medium)", padding: "12px", borderRadius: 20, display: 'flex', color: 'var(--tx3)' }}><Users size={48} /></div>
               <div>
                 <div style={{ fontFamily: "var(--fd)", fontSize: 28, fontWeight: 800, color: "var(--tx)", lineHeight: 1.2 }}>{currentGroup.name}</div>
                 <div style={{ fontSize: 13, color: "var(--tx3)", marginTop: 4, fontWeight: 500 }}>{currentGroup.type || 'Group'}</div>
@@ -2262,7 +2324,7 @@ function GroupDetail({ group, nav }) {
           <button
             className="ctx-trigger"
             onClick={(e) => { e.stopPropagation(); setShowEdit(true); }}
-            style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center" }}
+            style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--glass-soft)", display: "flex", alignItems: "center", justifyContent: "center" }}
           >
             <SettingsIcon size={16} />
           </button>
@@ -2343,7 +2405,7 @@ function GroupDetail({ group, nav }) {
                       <button className="btn btn-primary" style={{ flex: 1, padding: 12, fontSize: 14 }} onClick={(e) => { e.stopPropagation(); setConfirmSettle(s); }}>Settle</button>
                     </div>
                   ) : (
-                    <div style={{ padding: "12px 16px", background: "rgba(255,255,255,0.03)", borderRadius: 10, fontSize: 13, color: "var(--tx3)", textAlign: "center", fontWeight: 500 }}>Not your settlement</div>
+                    <div style={{ padding: "12px 16px", background: "var(--glass-soft)", borderRadius: 10, fontSize: 13, color: "var(--tx3)", textAlign: "center", fontWeight: 500 }}>Not your settlement</div>
                   )}
                 </div>
               );
@@ -3079,7 +3141,7 @@ function Settle({ group }) {
       </div>
 
       {/* ── MY BALANCE CARD ────────────────────────────── */}
-      <div style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.05), rgba(0,0,0,0.2))', borderRadius: 22, padding: 24, marginBottom: 24, border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
+      <div style={{ background: 'var(--report-hero-bg)', borderRadius: 22, padding: 24, marginBottom: 24, border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 20 }}>My Balance</div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', position: 'relative', zIndex: 1 }}>
           <div style={{ width: '100%' }}>
@@ -3183,7 +3245,7 @@ function Settle({ group }) {
                   </div>
 
                   {isExpanded && (
-                    <div style={{ borderTop: '1px solid var(--border)', padding: 16, background: 'rgba(0,0,0,0.2)' }}>
+                    <div style={{ borderTop: '1px solid var(--border)', padding: 16, background: 'var(--panel-bg-alt)' }}>
                       {g.settlements.map((s, idx) => (
                         <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: idx < g.settlements.length - 1 ? '1px solid var(--border)' : 'none' }}>
                           <div>
@@ -3222,7 +3284,7 @@ function Settle({ group }) {
             return (
               <div key={h._id} className={`settle-history-item ${isReversed ? 'reversed' : ''}`}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: isReversed ? 'rgba(255,255,255,0.05)' : 'rgba(181,255,77,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: isReversed ? 'var(--tx3)' : 'var(--lime)' }}>{isReversed ? <RefreshCw size={16} /> : <Check size={16} />}</div>
+                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: isReversed ? 'var(--glass-soft)' : 'rgba(181,255,77,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: isReversed ? 'var(--tx3)' : 'var(--lime)' }}>{isReversed ? <RefreshCw size={16} /> : <Check size={16} />}</div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: isReversed ? 'var(--tx3)' : 'var(--tx)', textDecoration: isReversed ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{text}</div>
                     <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 2 }}>{new Date(h.settled_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · {h.method}</div>
@@ -3318,11 +3380,11 @@ function MoreMobile({ nav }) {
           <ChevronRight size={20} color="var(--tx3)" />
         </div>
         <div style={{ display: 'flex', gap: 12 }}>
-          <div style={{ flex: 1, padding: 12, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ flex: 1, padding: 12, borderRadius: 12, background: 'var(--bg-glass)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ fontSize: 11, color: 'var(--tx3)', textTransform: 'uppercase', fontWeight: 700 }}>Net Balance</div>
             <div style={{ fontSize: 15, fontWeight: 800, color: userBalances.netBalance >= 0 ? 'var(--lime)' : 'var(--rose)' }}>{userBalances.netBalance > 0 ? '+' : ''}₹{userBalances.netBalance.toLocaleString()}</div>
           </div>
-          <div style={{ flex: 1, padding: 12, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ flex: 1, padding: 12, borderRadius: 12, background: 'var(--bg-glass)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ fontSize: 11, color: 'var(--tx3)', textTransform: 'uppercase', fontWeight: 700 }}>Pending Dues</div>
             <div style={{ fontSize: 15, fontWeight: 800, color: pendingDues > 0 ? 'var(--rose)' : 'var(--tx)' }}>{pendingDues}</div>
           </div>
@@ -3670,7 +3732,7 @@ function Reports({ nav, openModal }) {
       </div>
 
       {/* SECTION 1: HERO CARD */}
-      <div className="card" style={{ background: '#12121a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 24, padding: 'clamp(20px, 4vw, 32px)' }}>
+      <div className="card" style={{ background: 'var(--bg-card)', border: '1px solid var(--border2)', borderRadius: 24, padding: 'clamp(20px, 4vw, 32px)' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           <div>
             <div style={{ fontSize: 13, color: 'var(--tx3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Net Balance</div>
@@ -3739,7 +3801,7 @@ function Reports({ nav, openModal }) {
           <div className="card" style={{ borderRadius: 20, padding: 20, marginBottom: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--lime)', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Pending to Receive</div>
             {toReceiveList.map((t, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toReceiveList.length - 1 ? 12 : 0, borderBottom: i < toReceiveList.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toReceiveList.length - 1 ? 12 : 0, borderBottom: i < toReceiveList.length - 1 ? '1px solid var(--border)' : 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                   <div className="avatar sm" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>{t.from_avatar || t.from_name[0]}</div>
                   <div style={{ minWidth: 0 }}>
@@ -3758,7 +3820,7 @@ function Reports({ nav, openModal }) {
           <div className="card" style={{ borderRadius: 20, padding: 20, marginBottom: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: '#ff6060', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Pending to Pay</div>
             {toPayList.map((t, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toPayList.length - 1 ? 12 : 0, borderBottom: i < toPayList.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 12, marginBottom: i < toPayList.length - 1 ? 12 : 0, borderBottom: i < toPayList.length - 1 ? '1px solid var(--border)' : 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                   <div className="avatar sm" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>{t.to_avatar || t.to_name[0]}</div>
                   <div style={{ minWidth: 0 }}>
@@ -3784,7 +3846,7 @@ function Reports({ nav, openModal }) {
               return (
                 <div key={s._id} className={`settle-history-item ${isReversed ? 'reversed' : ''}`}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1, width: '100%' }}>
-                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: isReversed ? 'rgba(255,255,255,0.05)' : 'rgba(181,255,77,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{isReversed ? <RefreshCw size={18} /> : <Check size={18} />}</div>
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: isReversed ? 'var(--glass-soft)' : 'rgba(181,255,77,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{isReversed ? <RefreshCw size={18} /> : <Check size={18} />}</div>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: isReversed ? 'var(--tx3)' : 'var(--tx)', textDecoration: isReversed ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', whiteSpace: 'normal', wordBreak: 'break-word' }}>{fromName} paid {toName}</div>
                       <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 2 }}>{settledDate.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
@@ -3935,7 +3997,7 @@ function SmartBudget({ group, groupSpend }) {
               </div>
             </div>
 
-            <div className="prog-track" style={{ height: 10, background: 'rgba(255,255,255,0.05)', marginBottom: 25 }}>
+            <div className="prog-track" style={{ height: 10, background: 'var(--glass-soft)', marginBottom: 25 }}>
               <div className="prog-fill" style={{ width: `${pct}%`, background: color, transition: 'width 0.6s ease' }} />
             </div>
 
@@ -4560,8 +4622,15 @@ function Settings({ nav }) {
   const { groups } = useGroupStore();
   const { allExpenses } = useExpenseStore();
 
+  const [lang, setLang] = useState(normalizeLanguage(user?.settings?.lang || 'English'));
+  const [currency, setCurrency] = useState(normalizeCurrency(user?.settings?.currency || defaultCurrency));
+  const currentLanguage = normalizeLanguage(lang);
+  const currentCurrency = normalizeCurrency(currency);
+  const t = (key) => translate(key, currentLanguage);
+  const formatCurrency = (value) => formatMoney(value, currentCurrency);
+
   const totalAmount = allExpenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
-  const formattedAmount = totalAmount >= 1000 ? `₹${(totalAmount / 1000).toFixed(1)}K` : `₹${totalAmount.toLocaleString()}`;
+  const formattedAmount = formatCurrency(totalAmount);
 
   console.log("Groups:", groups.length);
   console.log("Expenses:", allExpenses.length);
@@ -4574,8 +4643,6 @@ function Settings({ nav }) {
   const [editUpi, setEditUpi] = useState(false);
   const [darkMode, setDarkMode] = useState(user?.settings?.dark_mode ?? true);
   const [notifOn, setNotifOn] = useState(user?.settings?.notify_push ?? true);
-  const [lang, setLang] = useState(user?.settings?.lang || "English");
-  const [currency, setCurrency] = useState(user?.settings?.currency || "₹ INR");
 
   const saveProfile = async () => {
     try {
@@ -4596,9 +4663,19 @@ function Settings({ nav }) {
   const togglePref = async (key, val) => {
     try {
       await updateProfile({ [key]: val });
-      if (key === 'lang') toast.success('Language preference saved');
-      if (key === 'currency') toast.success('Currency preference saved');
-    } catch (err) { toast.error(err.message); }
+      if (key === 'lang') {
+        const normalized = normalizeLanguage(val);
+        setLang(normalized);
+        toast.success(t('languageSaved'));
+      }
+      if (key === 'currency') {
+        const normalized = normalizeCurrency(val);
+        setCurrency(normalized);
+        toast.success(t('currencySaved'));
+      }
+    } catch (err) {
+      toast.error(err.message);
+    }
   };
 
   const handleDarkModeToggle = (newVal) => {
@@ -4622,6 +4699,11 @@ function Settings({ nav }) {
       document.documentElement.classList.remove('light');
     }
   }, []);
+
+  useEffect(() => {
+    setLang(normalizeLanguage(user?.settings?.lang || 'English'));
+    setCurrency(normalizeCurrency(user?.settings?.currency || defaultCurrency));
+  }, [user?.settings?.lang, user?.settings?.currency]);
 
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [pwData, setPwData] = useState({ current: '', new: '', confirm: '' });
@@ -4703,33 +4785,33 @@ function Settings({ nav }) {
             </div>
           </>)}
         </div>
-        <button className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }} onClick={() => setEditProfile(!editProfile)}>{editProfile ? "Cancel" : "Edit"}</button>
+        <button className="btn btn-ghost btn-sm" style={{ alignSelf: "flex-start" }} onClick={() => setEditProfile(!editProfile)}>{editProfile ? t('cancel') : "Edit"}</button>
       </div>
 
       <div className="card" style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--tx3)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: 11 }}>Preferences</div>
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--tx3)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: 11 }}>{t('preferences')}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
-          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><SettingsIcon size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Dark Mode</span>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><SettingsIcon size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>{t('darkMode')}</span>
           <div onClick={() => handleDarkModeToggle(!darkMode)} style={{ width: 38, height: 21, borderRadius: 99, background: darkMode ? "var(--lime)" : "var(--bg-glass)", border: darkMode ? "none" : "1px solid var(--border)", position: "relative", cursor: "pointer", transition: "all .2s" }}>
             <div style={{ width: 17, height: 17, borderRadius: 50, background: darkMode ? "#000" : "var(--tx3)", position: "absolute", top: 2, right: darkMode ? 2 : "auto", left: darkMode ? "auto" : 2, transition: "all .2s" }} />
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
-          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><Bell size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Notifications</span>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><Bell size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>{t('notifications')}</span>
           <div onClick={() => { setNotifOn(!notifOn); togglePref('notify_push', !notifOn); }} style={{ width: 38, height: 21, borderRadius: 99, background: notifOn ? "var(--lime)" : "var(--bg-glass)", border: notifOn ? "none" : "1px solid var(--border)", position: "relative", cursor: "pointer", transition: "all .2s" }}>
             <div style={{ width: 17, height: 17, borderRadius: 50, background: notifOn ? "#000" : "var(--tx3)", position: "absolute", top: 2, right: notifOn ? 2 : "auto", left: notifOn ? "auto" : 2, transition: "all .2s" }} />
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid var(--border)" }}>
-          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><FileText size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Language</span>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><FileText size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>{t('language')}</span>
           <select className="form-select" value={lang} onChange={e => { setLang(e.target.value); togglePref('lang', e.target.value); }} style={{ width: 130, padding: "5px 8px", fontSize: 12 }}>
             <option>English</option><option>Hindi</option><option>English / Hindi</option>
           </select>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0" }}>
-          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><Wallet size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>Currency</span>
+          <span style={{ width: 26, color: 'var(--tx2)', display: 'flex' }}><Wallet size={18} /></span><span style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>{t('currency')}</span>
           <select className="form-select" value={currency} onChange={e => { setCurrency(e.target.value); togglePref('currency', e.target.value); }} style={{ width: 130, padding: "5px 8px", fontSize: 12 }}>
-            <option>₹ INR</option><option>$ USD</option><option>€ EUR</option><option>£ GBP</option>
+            {currencyOptions.map(option => <option key={option}>{option}</option>)}
           </select>
         </div>
       </div>
@@ -4932,6 +5014,10 @@ export default function SplitBuddy() {
   const { expenses, fetchSettlePlan, userNetPositions, settlePlans } = useExpenseStore();
   const { unreadCount, fetchNotifications } = useUIStore();
 
+  const currentLanguage = normalizeLanguage(user?.settings?.lang || 'English');
+  const currentCurrency = normalizeCurrency(user?.settings?.currency || defaultCurrency);
+  const formatCurrency = (value) => formatMoney(value, currentCurrency);
+
   const [showGlobalBalancesModal, setShowGlobalBalancesModal] = useState(false);
 
   useEffect(() => {
@@ -5019,7 +5105,7 @@ export default function SplitBuddy() {
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS + `
         .mobile-back-btn { display: none; background: transparent; border: none; color: var(--tx); cursor: pointer; padding: 4px; border-radius: 8px; transition: background 0.2s; }
-        .mobile-back-btn:active { background: rgba(255,255,255,0.1); }
+        .mobile-back-btn:active { background: var(--hover-bg); }
         .mobile-page-title { display: none; font-size: 20px; font-weight: 700; color: var(--tx); }
         @media(max-width:768px) {
           .mobile-back-btn { display: flex; align-items: center; justify-content: center; }
@@ -5049,13 +5135,13 @@ export default function SplitBuddy() {
             ))}
           </div>
           <div className="sb-bottom">
-            <div className="card" style={{ padding: 12, marginBottom: 12, cursor: "pointer", background: "rgba(0,0,0,0.2)", border: "1px solid var(--border)", borderRadius: 12 }} onClick={() => setShowGlobalBalancesModal(true)}>
+            <div className="card" style={{ padding: 12, marginBottom: 12, cursor: "pointer", background: "var(--panel-bg-alt)", border: "1px solid var(--border)", borderRadius: 12 }} onClick={() => setShowGlobalBalancesModal(true)}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>
-                <span style={{ color: "var(--lime)" }}>Rec: ₹{userBalances.toReceiveTotal.toLocaleString()}</span>
-                <span style={{ color: "var(--rose)" }}>Pay: ₹{userBalances.toPayTotal.toLocaleString()}</span>
+                <span style={{ color: "var(--lime)" }}>Rec: {formatMoney(userBalances.toReceiveTotal, currentCurrency)}</span>
+                <span style={{ color: "var(--rose)" }}>Pay: {formatMoney(userBalances.toPayTotal, currentCurrency)}</span>
               </div>
               <div style={{ fontSize: 13, color: "var(--tx)", fontWeight: 600, display: "flex", justifyContent: "space-between" }}>
-                Net Balance: <span style={{ color: userBalances.netBalance >= 0 ? "var(--lime)" : "var(--rose)" }}>{userBalances.netBalance > 0 ? '+' : ''}₹{userBalances.netBalance.toLocaleString()}</span>
+                Net Balance: <span style={{ color: userBalances.netBalance >= 0 ? "var(--lime)" : "var(--rose)" }}>{userBalances.netBalance > 0 ? '+' : ''}{formatMoney(userBalances.netBalance, currentCurrency)}</span>
               </div>
             </div>
             <div className="user-pill" onClick={() => nav("settings")}>
@@ -5073,12 +5159,12 @@ export default function SplitBuddy() {
                   <ChevronLeft size={24} />
                 </button>
               )}
-              <span className="desktop-title">{PAGE_TITLES[page] || "SplitBuddy"}</span>
+              <span className="desktop-title">{translatePageTitle(page, currentLanguage) || "SplitBuddy"}</span>
               <div className="mobile-logo" style={{ display: ["more", "reports", "utilities", "settings", "profile"].includes(page) ? 'none' : '' }}>
                 <div className="logo-mark">S</div><span className="logo-text">Split<span>Buddy</span></span>
               </div>
               {["more", "reports", "utilities", "settings", "profile"].includes(page) && (
-                <div className="mobile-page-title">{PAGE_TITLES[page]}</div>
+                <div className="mobile-page-title">{translatePageTitle(page, currentLanguage)}</div>
               )}
             </div>
             <div className="topbar-actions">
