@@ -2,7 +2,6 @@ const mongoose = require('mongoose');
 const Expense = require('./models/Expense');
 const Group = require('./models/Group');
 const User = require('./models/User');
-const Settlement = require('./models/Settlement');
 require('dotenv').config();
 
 const testNewSettleLogic = async () => {
@@ -13,7 +12,7 @@ const testNewSettleLogic = async () => {
     const user = await User.findOne({ full_name: /abhishek/i });
     if (!user) return;
 
-    const group_id = 'all';
+    const _group_id = 'all';
     let match = { is_deleted: false };
     const userGroups = await Group.find({ 'members.user': user._id, 'members.is_active': true }, '_id');
     match.group = { $in: userGroups.map(g => g._id) };

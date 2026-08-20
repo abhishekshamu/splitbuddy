@@ -1,7 +1,6 @@
 const router = require('express').Router();
 const Expense = require('../models/Expense');
 const Group   = require('../models/Group');
-const User    = require('../models/User');
 const { asyncHandler } = require('../middleware/errorHandler');
 const mongoose = require('mongoose');
 

@@ -49,6 +49,7 @@ const calculateBalances = async (groupId) => {
 
 // ── List user's groups ────────────────────────────────────────────
 router.get('/', asyncHandler(async (req, res) => {
+  console.log(`[GET /groups] req.user.id: ${req.user.id}, typeof: ${typeof req.user.id}`);
   const groups = await Group.find({
     'members.user': req.user.id,
     'members.is_active': true,
@@ -56,6 +57,8 @@ router.get('/', asyncHandler(async (req, res) => {
   })
   .populate('members.user', 'full_name avatar_url')
   .sort({ created_at: -1 });
+
+  console.log(`[GET /groups] found ${groups.length} groups for user ${req.user.id}`);
 
   // Add expense counts and total spent (could be optimized with aggregation)
   const groupData = await Promise.all(groups.map(async (g) => {
@@ -103,7 +106,7 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 
   // 2. Prevent duplicate group names for this user
-  const duplicateNameRegex = new RegExp(`^${nameTrimmed.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i');
+  const duplicateNameRegex = new RegExp(`^${nameTrimmed.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i');
   const duplicateGroup = await Group.findOne({
     name: { $regex: duplicateNameRegex },
     'members.user': req.user._id,

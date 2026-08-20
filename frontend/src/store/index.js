@@ -75,8 +75,10 @@ export const useGroupStore = create((set, get) => ({
     set({ loading: true });
     try {
       const data = await api.groups.list(token);
+      console.log('[fetchGroups] Success', data);
       set({ groups: data.groups, loading: false });
     } catch (err) {
+      console.error('[fetchGroups] Error', err);
       set({ error: err.message, loading: false });
     }
   },
@@ -230,8 +232,10 @@ export const useExpenseStore = create((set, get) => ({
     if (!token) return;
     try {
       const data = await api.expenses.all(filters, token);
+      console.log('[fetchAllExpenses] Success', data);
       set({ allExpenses: data.expenses });
     } catch (err) {
+      console.error('[fetchAllExpenses] Error', err);
       set({ error: err.message });
     }
   },

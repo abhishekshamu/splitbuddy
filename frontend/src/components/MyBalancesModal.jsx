@@ -29,8 +29,8 @@ export default function MyBalancesModal({ onClose, balances, filterMember }) {
           {toReceiveList.length === 0 && toPayList.length === 0 && (
             <div style={{ textAlign: "center", padding: "40px 0" }}>
               <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--tx)", marginBottom: 8 }}>You're all settled up!</div>
-              <div style={{ fontSize: 14, color: "var(--tx2)" }}>No one owes you money, and you don't owe anyone.</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--tx)", marginBottom: 8 }}>You&apos;re all settled up!</div>
+              <div style={{ fontSize: 14, color: "var(--tx2)" }}>No one owes you money, and you don&apos;t owe anyone.</div>
             </div>
           )}
 
@@ -84,7 +84,7 @@ export default function MyBalancesModal({ onClose, balances, filterMember }) {
                           <div style={{ fontSize: 12, color: "var(--tx3)", marginTop: 2 }}>you owe</div>
                         </div>
                       </div>
-                      <div style={{ fontSize: 20, fontWeight: 800, color: "var(--rose)", fontFamily: "var(--fd)" }}>₹{s.amount.toLocaleString()}</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: "var(--rose)", fontFamily: "var(--fd)" }}>{formatCurrency(s.amount)}</div>
                     </div>
                     
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12, background: "var(--panel-bg-alt)", borderRadius: 8 }}>

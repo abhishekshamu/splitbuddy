@@ -2,7 +2,6 @@ const mongoose = require('mongoose');
 const Expense = require('./models/Expense');
 const Group = require('./models/Group');
 const User = require('./models/User');
-const Settlement = require('./models/Settlement');
 require('dotenv').config();
 
 const simulateSettlePlan = async () => {
@@ -17,7 +16,7 @@ const simulateSettlePlan = async () => {
     }
     console.log(`Simulating for user: ${user.full_name} (${user._id})`);
 
-    const group_id = 'all';
+    const _group_id = 'all';
     let match = { is_deleted: false };
     
     const userGroups = await Group.find({ 'members.user': user._id, 'members.is_active': true }, '_id');

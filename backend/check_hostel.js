@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 const Expense = require('./models/Expense');
 const Group = require('./models/Group');
-const Settlement = require('./models/Settlement');
 
 async function check() {
   await mongoose.connect('mongodb://mrabhishekshamu_db_user:abhishek123@ac-ywkdj4y-shard-00-00.zbtl7zo.mongodb.net:27017,ac-ywkdj4y-shard-00-01.zbtl7zo.mongodb.net:27017,ac-ywkdj4y-shard-00-02.zbtl7zo.mongodb.net:27017/splitbuddy?ssl=true&replicaSet=atlas-6qbaly-shard-0&authSource=admin&retryWrites=true&w=majority&appName=splitbuddy');

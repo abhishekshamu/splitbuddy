@@ -10,8 +10,6 @@
 const router = require('express').Router();
 const Expense      = require('../models/Expense');
 const Group        = require('../models/Group');
-const User         = require('../models/User');
-const Notification = require('../models/Notification');
 const { asyncHandler, AppError } = require('../middleware/errorHandler');
 const mongoose = require('mongoose');
 const logActivity = require('../config/activityLogger');
@@ -29,7 +27,7 @@ const calculateSplits = (amount, split_type, members, custom_splits = []) => {
       return members.map((m, i) => ({
         user: m.user,
         full_name: m.full_name,
-        owed_amount: i === 0 ? each + remainder : each,
+        owed_amount: i === 0 ? parseFloat((each + remainder).toFixed(2)) : each,
       }));
     }
 
@@ -57,15 +55,40 @@ const calculateSplits = (amount, split_type, members, custom_splits = []) => {
       });
     }
 
-    default:
+    case 'exact': {
+      return custom_splits.map(c => {
+        const mem = members.find(m => String(m.user) === String(c.user_id));
+        return {
+          user: c.user_id,
+          full_name: c.full_name || mem?.full_name || 'Member',
+          owed_amount: parseFloat(c.amount || 0),
+        };
+      });
+    }
+
+    case 'percentage': {
+      return custom_splits.map(c => {
+        const mem = members.find(m => String(m.user) === String(c.user_id));
+        const p = parseFloat(c.percent || 0);
+        return {
+          user: c.user_id,
+          full_name: c.full_name || mem?.full_name || 'Member',
+          percent: p,
+          owed_amount: parseFloat(((total * p) / 100).toFixed(2)),
+        };
+      });
+    }
+
+    default: {
       if (!members || members.length === 0) return [];
       const each = parseFloat((total / members.length).toFixed(2));
       const remainder = parseFloat((total - each * members.length).toFixed(2));
       return members.map((m, i) => ({
         user: m.user,
         full_name: m.full_name,
-        owed_amount: i === 0 ? each + remainder : each,
+        owed_amount: i === 0 ? parseFloat((each + remainder).toFixed(2)) : each,
       }));
+    }
   }
 };
 

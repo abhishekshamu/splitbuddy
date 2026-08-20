@@ -11,7 +11,7 @@ const connectDB = async () => {
     if (err.message.includes('querySrv ECONNREFUSED')) {
       console.error('💡 TIP: This is usually a DNS issue. Try using the "Standard Connection String" (mongodb://...) instead of the SRV one (mongodb+srv://...) in your .env file.');
     }
-    process.exit(1);
+    console.warn('⚠️ Server will continue running without MongoDB, but database-dependent routes will fail until reconnected.');
   }
 };
 

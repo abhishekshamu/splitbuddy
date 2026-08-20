@@ -170,7 +170,7 @@ const computeBalances = (expenses, settlements, memberMap, aliasMap) => {
 // VALIDATION ENGINE
 // ══════════════════════════════════════════════════════════════════
 
-const validateLedger = (ledger, totalExpenses) => {
+const validateLedger = (ledger, _totalExpenses) => {
   const errors = [];
 
   let sumPositive = 0;

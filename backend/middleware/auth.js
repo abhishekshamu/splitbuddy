@@ -12,7 +12,7 @@ const authenticate = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     
     // Verify token locally
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'yoursupersecretjwtkeyhere');
     
     // Fetch our MongoDB user record
     const user = await User.findById(decoded.id);

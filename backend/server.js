@@ -26,7 +26,9 @@ const { authenticate } = require('./middleware/auth');
 const connectDB        = require('./config/mongodb');
 
 // Initialize MongoDB
-connectDB();
+if (process.env.NODE_ENV !== 'test') {
+  connectDB();
+}
 
 const app = express();
 
@@ -36,12 +38,31 @@ app.set('trust proxy', 1);
 // ── Security & Middleware ─────────────────────────────────────────
 app.use(helmet());
 app.use(compression());
+const defaultOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173'
+];
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? [...process.env.ALLOWED_ORIGINS.split(','), ...defaultOrigins] 
+  : defaultOrigins;
+
 app.use(cors({
-  origin: (reqOrigin, callback) => {
-    // Reflect the origin if it exists, otherwise allow (for non-browser requests)
-    callback(null, true);
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
@@ -62,9 +83,13 @@ const authLimiter = rateLimit({
 app.use('/api', limiter);
 app.use('/api/auth', authLimiter);
 
-// ── Health Check ──────────────────────────────────────────────────
-app.get('/health', (req, res) => {
+// ── Health Check & Root Endpoints ────────────────────────────────
+app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
+});
+
+app.get('/api', (req, res) => {
+  res.json({ status: 'ok', message: 'SplitBuddy API Service Ready' });
 });
 
 app.get('/', (req, res) => {
@@ -94,10 +119,15 @@ app.use(errorHandler);
 
 // ── Start Server ──────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 SplitBuddy API running on port ${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`🚀 [SERVER] SplitBuddy API running on port ${PORT}`);
+    console.log(`📊 [ENVIRONMENT] ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔒 [CORS] Configured for origins: ${allowedOrigins.join(', ')}`);
+    console.log(`📡 [ROUTES] Mounted /api/auth, /api/groups, /api/expenses, /api/settle, /api/members, /api/utility, /api/reports, /api/notifications`);
+    console.log(`🟢 [HEALTH] Check active at http://localhost:${PORT}/api/health`);
+  });
+}
 
 module.exports = app;
 

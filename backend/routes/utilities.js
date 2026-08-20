@@ -6,9 +6,7 @@ const RoomNote     = require('../models/RoomNote');
 const SharedLink   = require('../models/SharedLink');
 const PaymentDue   = require('../models/PaymentDue');
 const Activity     = require('../models/Activity');
-const Notification = require('../models/Notification');
 const Group        = require('../models/Group');
-const User         = require('../models/User');
 const { asyncHandler, AppError } = require('../middleware/errorHandler');
 
 const logActivity = require('../config/activityLogger');

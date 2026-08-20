@@ -1,3 +1,4 @@
+require('dotenv').config();
 const request = require('supertest');
 const mongoose = require('mongoose');
 const app = require('../server');
@@ -12,7 +13,10 @@ describe('Group API - Create Group Validation Audit', () => {
   beforeAll(async () => {
     // Check if mongoose is connected, otherwise wait
     if (mongoose.connection.readyState === 0) {
-      await mongoose.connect(process.env.MONGODB_URI);
+      const uri = process.env.MONGODB_URI;
+      if (uri) {
+        await mongoose.connect(uri);
+      }
     }
 
     // Create a mock user for authentication
@@ -31,8 +35,11 @@ describe('Group API - Create Group Validation Audit', () => {
 
   afterAll(async () => {
     // Cleanup test data
-    await Group.deleteMany({ created_by: testUser._id });
-    await User.deleteOne({ _id: testUser._id });
+    if (testUser) {
+      await Group.deleteMany({ created_by: testUser._id });
+      await User.deleteOne({ _id: testUser._id });
+    }
+    await mongoose.connection.close();
   });
 
   beforeEach(async () => {
